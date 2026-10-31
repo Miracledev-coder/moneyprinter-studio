@@ -436,7 +436,7 @@ KEYF = Path.home() / ".flow-bridge" / "key"
 BASEF = Path.home() / ".flow-bridge" / "base"
 LOGF = Path.home() / ".flow-bridge" / "helper.log"
 LABEL = os.environ.get("FLOW_ACCOUNT", "")
-VERSION = "2026.10.31.7"
+VERSION = "2026.10.31.8"
 DEFAULT_BASE = "https://moneyprinter-studio.onrender.com"
 RAW = "https://raw.githubusercontent.com/Miracledev-coder/moneyprinter-studio/main/tools/flow-bridge/flow_bridge.py"
 AGENT = "com.calmcraze.flowbridge"
@@ -668,26 +668,51 @@ FFMPEG_LOCAL = STATE / "bin" / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
 RENDER_DISK_CAP = 1 << 30  # keep render temp files under ~1 GB
 
 
+def _ffmpeg_urls():
+    import platform
+    arm = platform.machine() == "arm64"
+    urls = ["https://www.osxexperts.net/ffmpeg80%s.zip" % ("arm" if arm else "intel"),
+            "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-darwin-x64.gz"]
+    try:  # evermeet.cx retired /getrelease; its info API still names the current versioned zip
+        with urllib.request.urlopen("https://evermeet.cx/ffmpeg/info/ffmpeg/release", timeout=20) as r:
+            urls.append(json.loads(r.read())["download"]["zip"]["url"])
+    except Exception:
+        pass
+    return urls
+
+
 def _fetch_ffmpeg():
-    """Self-updated helpers that never re-ran the installer: fetch the same static evermeet.cx ffmpeg (no compiling)."""
+    """Self-updated helpers that never re-ran the installer: same static-ffmpeg fallback chain as install.sh (no compiling)."""
     if sys.platform != "darwin":
         return
-    import io, zipfile
-    try:
-        with urllib.request.urlopen(urllib.request.Request("https://evermeet.cx/ffmpeg/getrelease/zip", headers={"User-Agent": "flow-bridge/" + VERSION}), timeout=300) as r:
-            z = zipfile.ZipFile(io.BytesIO(r.read()))
-        FFMPEG_LOCAL.parent.mkdir(parents=True, exist_ok=True)
-        tmp = FFMPEG_LOCAL.with_suffix(".tmp")
-        tmp.write_bytes(z.read("ffmpeg")); tmp.chmod(0o755); os.replace(tmp, FFMPEG_LOCAL)
-        print("Installed ffmpeg for fast rendering on this Mac.", flush=True)
-    except Exception as e:
-        print("(could not install ffmpeg:", type(e).__name__, ")", flush=True)
+    import io, zipfile, gzip
+    FFMPEG_LOCAL.parent.mkdir(parents=True, exist_ok=True)
+    tmp = FFMPEG_LOCAL.with_suffix(".tmp")
+    for u in _ffmpeg_urls():
+        try:
+            with urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": "flow-bridge/" + VERSION}), timeout=600) as r:
+                data = r.read()
+            data = gzip.decompress(data) if u.endswith(".gz") else zipfile.ZipFile(io.BytesIO(data)).read("ffmpeg")
+            tmp.write_bytes(data); tmp.chmod(0o755)
+            subprocess.run(["xattr", "-d", "com.apple.quarantine", str(tmp)], capture_output=True)
+            if subprocess.run([str(tmp), "-hide_banner", "-version"], capture_output=True, timeout=30).returncode != 0:
+                raise RuntimeError("binary does not run")
+            os.replace(tmp, FFMPEG_LOCAL)
+            print("Installed ffmpeg for fast rendering on this Mac.", flush=True)
+            return
+        except Exception as e:
+            tmp.unlink(missing_ok=True)
+            print("(could not install ffmpeg from", u.split("/")[2], ":", type(e).__name__, ")", flush=True)
 
 
 def _ffmpeg():
     if FFMPEG_LOCAL.exists() and os.access(FFMPEG_LOCAL, os.X_OK):
         return str(FFMPEG_LOCAL)
-    return shutil.which("ffmpeg")
+    # launchd PATH omits Homebrew dirs, so check them explicitly (same places install.sh looks)
+    for c in (shutil.which("ffmpeg"), "/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"):
+        if c and os.access(c, os.X_OK):
+            return c
+    return None
 
 
 def _api(base, key, path, body=None, method=None, timeout=60, headers=None, raw=False):

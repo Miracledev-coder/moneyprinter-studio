@@ -18,15 +18,40 @@ echo "3/4  Installing the browser engine (one-time, ~150 MB)…"
 echo "4/4  Installing flow-bridge…"
 curl -fsSL "$RAW/flow_bridge.py" -o "$D/flow_bridge.py" || fail "Could not download flow-bridge. Check your internet connection and try again."
 if [ "$(uname)" = Darwin ]; then
-  echo "     + ffmpeg for fast rendering on this Mac (static build from evermeet.cx, one-time, ~25 MB)…"
   mkdir -p "$D/bin"
-  if ! "$D/bin/ffmpeg" -hide_banner -encoders 2>/dev/null | grep -q h264_videotoolbox; then
-    rm -f "$D/bin/ffmpeg" "$D/ffmpeg.zip"
-    if curl -fsSL --retry 3 "https://evermeet.cx/ffmpeg/getrelease/zip" -o "$D/ffmpeg.zip" && ditto -x -k "$D/ffmpeg.zip" "$D/bin" 2>/dev/null; then
-      chmod +x "$D/bin/ffmpeg"; xattr -d com.apple.quarantine "$D/bin/ffmpeg" 2>/dev/null || true
+  FF="$D/bin/ffmpeg"
+  ffok() { "$1" -hide_banner -version >/dev/null 2>&1; }
+  if ! ffok "$FF"; then
+    rm -f "$FF"
+    # Reuse an ffmpeg that is already installed (Homebrew or anything on PATH): link it where the helper looks.
+    for c in "$(command -v ffmpeg 2>/dev/null)" /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg; do
+      if [ -n "$c" ] && [ -x "$c" ] && ffok "$c"; then ln -sf "$c" "$FF"; echo "     + using your existing ffmpeg: $c"; break; fi
+    done
+  fi
+  if ! ffok "$FF"; then
+    echo "     + ffmpeg for fast rendering on this Mac (static build, one-time, ~25 MB)…"
+    rm -f "$FF"
+    if [ "$(uname -m)" = arm64 ]; then OX=https://www.osxexperts.net/ffmpeg80arm.zip; else OX=https://www.osxexperts.net/ffmpeg80intel.zip; fi
+    EV=$(curl -fsSL --max-time 20 https://evermeet.cx/ffmpeg/info/ffmpeg/release 2>/dev/null | tr ',' '\n' | grep -o 'https://evermeet.cx/ffmpeg/ffmpeg-[0-9.]*\.zip' | head -n 1)
+    for u in "$OX" https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-darwin-x64.gz $EV; do
+      t="$D/ffmpeg.dl"; rm -f "$t"
+      curl -fsSL --retry 3 --max-time 600 "$u" -o "$t" 2>/dev/null || { rm -f "$t"; continue; }
+      case "$u" in
+        *.gz) gunzip -c "$t" > "$FF" 2>/dev/null ;;
+        *.zip) unzip -o -j -q "$t" ffmpeg -d "$D/bin" 2>/dev/null ;;
+      esac
+      rm -f "$t"
+      if [ -f "$FF" ]; then
+        chmod +x "$FF"; xattr -d com.apple.quarantine "$FF" 2>/dev/null || true
+        ffok "$FF" && break
+      fi
+      rm -f "$FF"
+    done
+    if ffok "$FF"; then
+      "$FF" -hide_banner -encoders 2>/dev/null | grep -q h264_videotoolbox || echo "     (note: this ffmpeg has no h264_videotoolbox; rendering still works, just slower)"
+    else
+      rm -f "$FF"; echo "⚠️  ffmpeg download failed: Studio will keep rendering on the server (run the installer again later)."
     fi
-    rm -f "$D/ffmpeg.zip"
-    "$D/bin/ffmpeg" -hide_banner -version >/dev/null 2>&1 || { rm -f "$D/bin/ffmpeg"; echo "⚠️  ffmpeg download failed: Studio will keep rendering on the server (run the installer again later)."; }
   fi
 fi
 printf '#!/bin/sh\nexec uv run --no-project --python 3.12 "$HOME/.flow-bridge/flow_bridge.py" "$@"\n' > "$B/flow-bridge"
