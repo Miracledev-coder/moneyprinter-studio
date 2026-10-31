@@ -185,6 +185,12 @@ def admin():
 
 def set_admin_refresh(rt):
     _admin["acct"] = Account(rt, [folder_name()])
+    if _users:  # copy the existing user Drive links into the admin Drive vault right away
+        try:
+            with _vlock:
+                _save_vault()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def enabled():

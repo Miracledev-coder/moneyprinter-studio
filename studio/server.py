@@ -1283,6 +1283,7 @@ def oauth_cb(req: Request, code: str = "", state: str = "", error: str = ""):
         return back("Connected. New videos will be saved to your Google Drive.")
     if rt:
         gd.set_admin_refresh(rt)
+        _try(lambda: (_keys_save(_keys()), _revoke()))  # mirror Flow pairings + revocations to the durable Drive copy
     for k, v in jobs.items():
         if v.get("status") == "done" and not v.get("drive"):
             _up.push(k)
