@@ -163,14 +163,40 @@ def save_history():
     HIST.write_text(json.dumps(done))
 
 
-def sign(u):
-    return u + "|" + hmac.new(SECRET, u.encode(), hashlib.sha256).hexdigest()
+SESSION_DAYS = 30
+
+
+def sign(u, exp=None, remember=True):
+    """Stateless session: user|expiry|remember|HMAC. Survives restarts as long as SESSION_SECRET is fixed."""
+    exp = int(exp or time.time() + SESSION_DAYS * 86400)
+    body = f"{u}|{exp}|{1 if remember else 0}"
+    return body + "|" + hmac.new(SECRET, (body + "|" + hashlib.sha256(USERS.get(u, "").encode()).hexdigest()[:16]).encode(), hashlib.sha256).hexdigest()
+
+
+def _session(req):
+    c = req.cookies.get("mps", "")
+    parts = c.split("|")
+    if len(parts) != 4:
+        return None
+    u, exp, rem, _ = parts
+    try:
+        if u in USERS and int(exp) > time.time() and hmac.compare_digest(c, sign(u, int(exp), rem == "1")):
+            return u, int(exp), rem == "1"
+    except ValueError:
+        pass
+    return None
 
 
 def current_user(req: Request):
-    c = req.cookies.get("mps", "")
-    u = c.split("|", 1)[0]
-    return u if u in USERS and hmac.compare_digest(c, sign(u)) else None
+    s = _session(req)
+    return s[0] if s else None
+
+
+def set_session(r, u, remember):
+    kw = dict(httponly=True, samesite="lax", secure=os.environ.get("RENDER") is not None)
+    if remember:
+        kw["max_age"] = SESSION_DAYS * 86400
+    r.set_cookie("mps", sign(u, remember=remember), **kw)
 
 
 def worker():
@@ -258,7 +284,7 @@ def index(req: Request):
 
 
 @app.post("/login")
-def login(req: Request, username: str = Form(...), password: str = Form(...)):
+def login(req: Request, username: str = Form(...), password: str = Form(...), remember: str = Form("")):
     ip = (req.headers.get("x-forwarded-for") or (req.client.host if req.client else "")).split(",")[0].strip()
     now = time.time()
     f = [t for t in _fails.get(ip, []) if now - t < 900]
@@ -271,8 +297,7 @@ def login(req: Request, username: str = Form(...), password: str = Form(...)):
         return HTMLResponse(LOGIN.replace("{{ERR}}", "Wrong username or password."), 401)
     _fails.pop(ip, None)
     r = RedirectResponse("/", 303)
-    r.set_cookie("mps", sign(username.strip()), httponly=True, samesite="lax", max_age=7 * 86400,
-                 secure=os.environ.get("RENDER") is not None)
+    set_session(r, username.strip(), bool(remember))
     return r
 
 
@@ -530,6 +555,9 @@ async def preview_frame(req: Request):
 @app.middleware("http")
 async def security_headers(req: Request, call_next):
     r = await call_next(req)
+    s = _session(req)
+    if s and s[2] and s[1] - time.time() < (SESSION_DAYS - 1) * 86400 and "set-cookie" not in r.headers:
+        set_session(r, s[0], True)  # sliding renewal, at most once a day
     r.headers["X-Content-Type-Options"] = "nosniff"
     r.headers["X-Frame-Options"] = "DENY"
     r.headers["Referrer-Policy"] = "same-origin"
