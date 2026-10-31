@@ -236,7 +236,8 @@ async def generate(req: Request):
     if preset:
         mode = "word_by_word"  # presets regroup word timings into ASS lines
     extra = dict(subtitle_preset=preset, highlight_color=hexc(b.get("sub_hl"), "#A855F7"),
-                 subtitle_uppercase=bool(b.get("sub_upper")))
+                 subtitle_uppercase=bool(b.get("sub_upper")),
+                 subtitle_bold=bool(b.get("sub_bold")), subtitle_italic=bool(b.get("sub_italic")))
     voice = b.get("voice") if b.get("voice") in VOICES.values() else VOICES["Ezinne — Nigerian, female"]
     secs = LENGTHS.get(str(b.get("length")), 15)
     length = 1 if secs <= 30 else 2 if secs <= 60 else 3 if secs <= 90 else 4 if secs <= 120 else 6

@@ -170,6 +170,8 @@ class VideoParams(BaseModel):
     subtitle_preset: Optional[str] = ""
     highlight_color: Optional[str] = "#A855F7"
     subtitle_uppercase: bool = False
+    subtitle_bold: bool = False
+    subtitle_italic: bool = False
     n_threads: Optional[int] = 2
     paragraph_number: int = Field(default=1, ge=1, le=10)
     video_script_prompt: str = Field(default="", max_length=2000)

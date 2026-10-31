@@ -1671,7 +1671,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_family},{fs},{prim},{hl},{outl},{back},0,0,0,0,100,100,0,0,{border},{ow:.1f},{shadow},{align},{int(width*0.08)},{int(width*0.08)},{margin_v},1
+Style: Default,{font_family},{fs},{prim},{hl},{outl},{back},{-1 if getattr(params, 'subtitle_bold', False) else 0},{-1 if getattr(params, 'subtitle_italic', False) else 0},0,0,100,100,0,0,{border},{ow:.1f},{shadow},{align},{int(width*0.08)},{int(width*0.08)},{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1758,7 +1758,8 @@ def _ffmpeg_final_render(video_path, audio_path, subtitle_path, output_file, par
         boxed = (isinstance(bg, str) and bg != "") or bg is True
         style = [f"FontName={font_family}", f"FontSize={fs}", f"PrimaryColour={_ass_color(params.text_fore_color)}",
                  f"OutlineColour={_ass_color(params.stroke_color)}", f"Alignment={align}",
-                 f"MarginV={round(288 * 0.08)}", "Bold=0"]
+                 f"MarginV={round(288 * 0.08)}", f"Bold={-1 if getattr(params, 'subtitle_bold', False) else 0}",
+                 f"Italic={-1 if getattr(params, 'subtitle_italic', False) else 0}"]
         if boxed:
             style += ["BorderStyle=3", f"BackColour={_ass_color(bg if isinstance(bg, str) else '#000000AA')}",
                       f"OutlineColour={_ass_color(bg if isinstance(bg, str) else '#000000AA')}", "Outline=6", "Shadow=0"]
