@@ -114,7 +114,7 @@ def audio_duration(ffmpeg, path):
     return probe(ffmpeg, path)[2]
 
 
-def render(spec, workdir, out, ffmpeg="ffmpeg", encoder="libx264", workers=1, threads="1", final_threads=None, cancel=None,
+def render(spec, workdir, out, ffmpeg="ffmpeg", encoder="libx264", workers=1, threads="1", final_threads=None, cancel=None, lowmem=None,
            progress=None, log=print, procs=None):
     """Render `spec` (files in `workdir`) to `out`. Returns a dict of timings and the encoder actually used."""
     t0 = time.time()
@@ -162,10 +162,16 @@ def render(spec, workdir, out, ffmpeg="ffmpeg", encoder="libx264", workers=1, th
     END = float(spec.get("end", 2.5))
     end_on = bool(spec.get("endcard")) and adur > 0
     total = adur + (END if end_on else 0)
+    if lowmem is None:
+        lowmem = os.environ.get("MPT_LOWMEM_RENDER", "") == "1"
+    # lowmem (512 MB servers): every decoder single-threaded (ffmpeg's auto threads = host cores, each with frame
+    # buffers) and the scene join done in its own pass, so the final pass decodes ONE video instead of all scenes.
+    IT = ["-threads", "1"] if lowmem else []
+    temps = []
     cmd = [ffmpeg, "-y", "-loglevel", "error"]
     graph, nin = [], 0
     for k, (s, d, _f) in enumerate(keep):
-        cmd += ["-i", s]
+        cmd += [*IT, "-i", s]
         graph.append(f"[{k}:v]fps=30,settb=AVTB,setsar=1,format=yuv420p[n{k}]")
     nin = len(keep)
     acc, t = "[n0]", keep[0][1] + (xf if keep[0][2] else 0)
@@ -180,14 +186,51 @@ def render(spec, workdir, out, ffmpeg="ffmpeg", encoder="libx264", workers=1, th
             graph.append(f"{acc}[n{i}]concat=n=2:v=1:a=0{lab}")
             t += d
         acc = lab
-    ai = nin; cmd += ["-i", path(spec["audio"])]; nin += 1
+    if lowmem and len(keep) > 1:
+        # same join decisions as the graph above, but built from small pieces (<= 2 decoders at a time) that the
+        # concat demuxer then plays back one after another in the final pass
+        P(68, "Joining scenes")
+        nom = [kp[1] + (xf if kp[2] else 0) for kp in keep]
+        fade_at, tt = [False] * len(keep), nom[0]
+        for i in range(1, len(keep)):
+            if keep[i - 1][2] and nom[i] > 2 * xf and nom[i - 1] > 2 * xf and tt - xf > 0:
+                fade_at[i], tt = True, tt - xf + nom[i]
+            else:
+                tt += nom[i]
+        real = [probe(ffmpeg, kp[0])[2] or nom[k] for k, kp in enumerate(keep)]
+        norm = "fps=30,settb=AVTB,setsar=1,format=yuv420p"
+        pieces = []
+
+        def piece(args, name):
+            if cancel and cancel():
+                raise Cancelled()
+            _run([ffmpeg, "-y", "-loglevel", "error", *args, "-an", *INTER, "-threads", "1", path(name)], cancel, 600, procs)
+            pieces.append(path(name))
+
+        for k, kp in enumerate(keep):
+            a = xf if fade_at[k] else 0.0
+            b = real[k] - (xf if k + 1 < len(keep) and fade_at[k + 1] else 0.0)
+            if b - a > 0.04:
+                piece([*IT, "-i", kp[0], "-vf", f"trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS,{norm}"], f"pc{k:02d}a.mp4")
+            if k + 1 < len(keep) and fade_at[k + 1]:
+                st = max(0.0, real[k] - xf)
+                piece([*IT, "-i", kp[0], *IT, "-i", keep[k + 1][0], "-filter_threads", "1", "-filter_complex",
+                       f"[0:v]trim=start={st:.3f},setpts=PTS-STARTPTS,{norm}[x0];[1:v]trim=end={xf:.3f},setpts=PTS-STARTPTS,{norm}[x1];"
+                       f"[x0][x1]xfade=transition=fade:duration={xf}:offset=0[v]", "-map", "[v]"], f"pc{k:02d}x.mp4")
+        lst = path("pieces.txt")
+        with open(lst, "w") as f:
+            f.writelines(f"file '{os.path.basename(pc)}'\n" for pc in pieces)
+        temps.extend(pieces + [lst])
+        cmd = [ffmpeg, "-y", "-loglevel", "error", *IT, "-f", "concat", "-safe", "0", "-i", lst]
+        graph, nin, acc = [f"[0:v]{norm}[n0]"], 1, "[n0]"
+    ai = nin; cmd += [*IT, "-i", path(spec["audio"])]; nin += 1
     bi = wi = ci = None
     if spec.get("bgm"):
-        cmd += ["-stream_loop", "-1", "-i", path(spec["bgm"])]; bi = nin; nin += 1
+        cmd += ["-stream_loop", "-1", *IT, "-i", path(spec["bgm"])]; bi = nin; nin += 1
     if spec.get("wm"):
-        cmd += ["-loop", "1", "-framerate", "30", "-t", f"{(adur or 600) + END:.2f}", "-i", path(spec["wm"])]; wi = nin; nin += 1
+        cmd += ["-loop", "1", "-framerate", "30", "-t", f"{(adur or 600) + END:.2f}", *IT, "-i", path(spec["wm"])]; wi = nin; nin += 1
     if end_on:
-        cmd += ["-loop", "1", "-framerate", "30", "-t", f"{total:.2f}", "-i", path(spec["endcard"])]; ci = nin; nin += 1
+        cmd += ["-loop", "1", "-framerate", "30", "-t", f"{total:.2f}", *IT, "-i", path(spec["endcard"])]; ci = nin; nin += 1
     vf = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}"
     sub = spec.get("sub")
     if sub and os.path.exists(path(sub["file"])):
@@ -221,9 +264,11 @@ def render(spec, workdir, out, ffmpeg="ffmpeg", encoder="libx264", workers=1, th
               f"[va][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0{afo}[a]")
     else:
         af = f"[{ai}:a]volume={vol}{apad}[a]"
-    cmd += ["-filter_complex", ";".join(graph) + ";" + af, "-map", f"[{last}]", "-map", "[a]", "-t", f"{total:.2f}"]
+    cmd += [*(["-filter_threads", "1"] if lowmem else []), "-filter_complex", ";".join(graph) + ";" + af, "-map", f"[{last}]", "-map", "[a]", "-t", f"{total:.2f}"]
     tail = ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", out]
     x264 = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-threads", str(final_threads or threads)]
+    if lowmem:
+        x264 += ["-x264-params", "rc-lookahead=10:sync-lookahead=0"]
     used = encoder
     P(70, "Final render (subtitles, music, voice)")
     if encoder == "h264_videotoolbox":
@@ -239,7 +284,7 @@ def render(spec, workdir, out, ffmpeg="ffmpeg", encoder="libx264", workers=1, th
     else:
         used = "libx264"
         _run(cmd + x264 + tail, cancel, 1800, procs)
-    for s, _d, _f in keep:
+    for s in [k_[0] for k_ in keep] + temps:
         try:
             os.remove(s)
         except OSError:

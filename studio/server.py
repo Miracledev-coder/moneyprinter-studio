@@ -452,15 +452,27 @@ def _fast_compose(jid, req, d, dest):
                 jobs[jid]["stage"] = msg
     t2 = time.time()
     try:
-        r = macrender.fastrender.render(spec, str(wd), str(dest), ffmpeg="ffmpeg", encoder="libx264",
-                                        workers=int(os.environ.get("FAST_RENDER_WORKERS", min(2, os.cpu_count() or 1))),
+        lowmem = os.environ.get("MPT_LOWMEM_RENDER", "") == "1"
+        if lowmem and spec.get("hd"):  # 1080p upscale needs ~450 MB in ffmpeg alone: too much next to the app on 512 MB
+            spec = dict(spec, hd=False)
+            if jid in jobs:
+                jobs[jid]["notice"] = "Rendered on server at 720p (connect the Mac helper for 1080p)"
+        import gc
+        gc.collect()
+        try:
+            import ctypes
+            ctypes.CDLL("libc.so.6").malloc_trim(0)  # hand freed Python memory back before ffmpeg starts
+        except Exception:
+            pass
+        r = macrender.fastrender.render(spec, str(wd), str(dest), ffmpeg="ffmpeg", encoder="libx264", lowmem=lowmem,
+                                        workers=int(os.environ.get("FAST_RENDER_WORKERS", 1 if lowmem else min(2, os.cpu_count() or 1))),
                                         threads=os.environ.get("MPT_FFMPEG_THREADS", "1"), cancel=lambda: _stopped(jid, req),
                                         progress=sprog)
     except macrender.fastrender.Cancelled:
         raise Stopped()
     tm_.update(render_s=round(time.time() - t2, 1), server=r)
     if jid in jobs:
-        jobs[jid].update(renderer="server", notice="Rendered on server")
+        jobs[jid].update(renderer="server", notice=jobs[jid].get("notice") if "720p" in str(jobs[jid].get("notice")) else "Rendered on server")
 
 
 def run_long(lid, j):
@@ -519,7 +531,11 @@ def run_long(lid, j):
     _up.push(lid)
 
 
+_READY = threading.Event()  # set once the whole module is loaded (TEMPLATES etc. are defined further down)
+
+
 def worker():
+    _READY.wait(120)
     while True:
         jid = jobq.get()
         j = jobs.get(jid)
@@ -597,7 +613,19 @@ def keepalive():
 threading.Thread(target=keepalive, daemon=True).start()
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 HERE = Path(__file__).parent
-app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
+from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+class _CachedStatic(StaticFiles):
+    async def get_response(self, path, scope):
+        r = await super().get_response(path, scope)
+        if r.status_code == 200:
+            r.headers["Cache-Control"] = "public, max-age=3600"
+        return r
+
+
+app.mount("/static", _CachedStatic(directory=HERE / "static"), name="static")
 PAGE = ((HERE / "index.html").read_text()
         .replace("{{SHELL}}", (HERE / "static/cc-shell.html").read_text())
         .replace("{{IDEAS}}", (HERE / "static/cc-ideas.html").read_text())
@@ -1292,7 +1320,7 @@ def history(req: Request):
         d["drive"] = bool(j.get("drive"))
         d["id"] = k
         if j.get("flow") and j["status"] == "done":
-            fj = _fload(j["flow"]) or {}
+            fj = _fload_cached(j["flow"])
             d["scenes"] = [{"n": i + 1, "type": _kind(fj, i), "model": (fj.get("models") or [""] * 99)[i], "filled": bool(x)}
                            for i, x in enumerate(fj.get("filled") or [])]
         if j.get("regen"):
@@ -1306,7 +1334,9 @@ def history(req: Request):
             d["regen"] = rg
         d.update({x: y for x, y in status(k, req).items() if x in ("progress", "elapsed", "ahead", "stage", "notice")} if j["status"] in ("queued", "running") else {})
         out.append(d)
-    return out[:30]
+        if len(out) >= 30:
+            break
+    return out
 
 
 @app.get("/video/{jid}")
@@ -1582,6 +1612,26 @@ def _fload(fid):
         return _json.loads(p.read_text()) if p.name != ".json" and p.exists() else None
     except Exception:
         return None
+
+
+_FCACHE = {}
+
+
+def _fload_cached(fid):
+    """History polls every few seconds: re-read a Flow job file only when it changed on disk."""
+    p = _fpath(fid)
+    try:
+        mt = p.stat().st_mtime_ns
+    except Exception:
+        return {}
+    c = _FCACHE.get(fid)
+    if c and c[0] == mt:
+        return c[1]
+    fj = _fload(fid) or {}
+    if len(_FCACHE) > 200:
+        _FCACHE.clear()
+    _FCACHE[fid] = (mt, fj)
+    return fj
 
 
 _FLOCK = threading.RLock()  # Flow job files are read-modify-written by the runner, uploads, pings and fail reports
@@ -2889,6 +2939,7 @@ async def story_zip(req: Request):
             z.writestr("scene_prompts.txt", clean_text(b.get("prompts"), 60000))
     return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="story.zip"'})
 
+_READY.set()
 
 if __name__ == "__main__":
     import uvicorn

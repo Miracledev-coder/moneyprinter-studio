@@ -31,6 +31,19 @@ def test_fastrender_full_features(inputs, tmp_path):
     assert not list(Path(wd).glob("seg*.mp4"))  # intermediates cleaned
 
 
+def test_fastrender_lowmem_same_output(inputs, tmp_path):
+    """512 MB server path: single-threaded decoders + piecewise scene join (<= 2 decoders at once)."""
+    spec, files, wd = inputs
+    out = tmp_path / "o.mp4"
+    r = fastrender.render(spec, str(wd), str(out), workers=1, lowmem=True)
+    i = assets.info(out)
+    v = [s for s in i["streams"] if s["codec_type"] == "video"][0]
+    assert (v["width"], v["height"]) == (720, 1280)
+    assert abs(float(i["format"]["duration"]) - 12.5) < 0.3
+    assert r["scenes"] == 5
+    assert not list(Path(wd).glob("seg*.mp4")) and not list(Path(wd).glob("pc*.mp4")) and not (Path(wd) / "pieces.txt").exists()
+
+
 def test_fastrender_landscape_and_broken_scene(inputs, tmp_path):
     spec, files, wd = inputs
     sp = json.loads(json.dumps(spec)); sp.update(W=1280, H=720)
