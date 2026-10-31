@@ -102,6 +102,19 @@ def gflow_bin():
 DRIFT = 23  # gflow-cli exit code: Flow's page changed (selector drift) -> stop driving, fall back to manual
 
 
+CTX = {}  # base + key while connected, so the driver can ask whether a job was stopped
+
+
+def job_open(jid):
+    """False once Studio stopped/closed this job (Stop generation): no more Flow credits are spent on it."""
+    if not CTX:
+        return True
+    try:
+        return any(j["job"] == jid for j in ping(CTX["base"], CTX["key"]).get("jobs", []))
+    except Exception:
+        return True
+
+
 def drive(job, folder, cap, pace=(75, 120)):
     """Route A/B: gflow-cli drives labs.google/flow in a real, headed Chrome with your own signed-in profile.
     One scene at a time, 75-120 s apart, daily cap. Each file is saved as NN_scene.ext so it lands in the right scene."""
@@ -115,6 +128,8 @@ def drive(job, folder, cap, pace=(75, 120)):
     used = int(cf.read_text() or 0) if cf.exists() else 0
     refs = sorted(str(p) for p in Path(folder).glob("ref-*"))
     for sc in job["scenes"]:
+        if not job_open(job["job"]):
+            print(f"[auto] Job {job['job'][:8]} was stopped in Studio; skipping its remaining scenes."); job["stopped"] = True; return True
         if used >= cap:
             print(f"[auto] Daily cap of {cap} Flow generations reached. The rest can be done by hand or tomorrow."); return True
         if sc.get("filled"):
@@ -262,6 +277,7 @@ def ping(base, key):
 
 def connect(base, key, folder, use_drive, cap):
     """Stay online: heartbeat every 20 s, pick up new jobs (renders that chose the Flow engine) and fill them."""
+    CTX.update(base=base, key=key)
     print(f"Connected to {base}. Studio now uses Google Flow while this window stays open. (Ctrl+C to stop)")
     import threading
     threading.Thread(target=credits_loop, daemon=True).start()
@@ -315,10 +331,12 @@ def watch(job, token, folder, use_drive, cap, base=None, key=None):
     if use_drive:
         import threading
         threading.Thread(target=drive, args=(job, folder, cap), daemon=True).start()
-    while done < total:
+    while done < total and not job.get("stopped"):
         if base and time.time() - last_ping > 20:
             try:
-                ping(base, key); last_ping = time.time()
+                last_ping = time.time()
+                if not any(x["job"] == job["job"] for x in ping(base, key).get("jobs", [])):
+                    print(f"Job {job['job'][:8]} was stopped or finished in Studio."); return
             except Exception:
                 pass
         new = sorted((p for p in folder.rglob("*") if p.suffix.lower() in MEDIA and p not in seen

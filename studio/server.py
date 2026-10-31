@@ -261,9 +261,51 @@ sys.path.insert(0, str(Path(__file__).parent))
 import scenes as scn  # noqa: E402
 
 
+_CANCEL = set()  # job ids the owner/admin stopped ("Stop generation")
+
+
+class Stopped(Exception):
+    pass
+
+
+def _stopped(jid, req=None):
+    return jid in _CANCEL or bool(req and req.get("_root") in _CANCEL)
+
+
+def _chk(jid, req=None):
+    if _stopped(jid, req):
+        raise Stopped()
+
+
+def _kill_ffmpeg(tag):
+    """Kill running ffmpeg/ffprobe processes working on this job's files (their command line contains the job id)."""
+    n = 0
+    for d in Path("/proc").iterdir():
+        if not d.name.isdigit():
+            continue
+        try:
+            cl = (d / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="ignore")
+        except Exception:
+            continue
+        if "ffmpeg" in cl.split(" ")[0] and tag in cl:
+            try:
+                os.kill(int(d.name), 9); n += 1
+            except Exception:
+                pass
+    return n
+
+
 def render(jid, req, dest):
     """Render one video for `req` into `dest` (blocking). Returns the script used."""
     tdir = Path(utils.task_dir(jid))
+    _chk(jid, req)
+    stop_watch = threading.Event()
+
+    def _killer():  # while a stopped job is still inside the render pipeline, keep killing its ffmpeg steps
+        while not stop_watch.wait(2):
+            if _stopped(jid, req):
+                _kill_ffmpeg(jid[:8]); _kill_ffmpeg(str(tdir))
+    threading.Thread(target=_killer, daemon=True).start()
     try:
         if req.get("scenes") and not all(Path(p).exists() for p in (req.get("_local") or ["/nonexistent"])):
             req["_local"] = scn.materialize(jid, req.get("_user", ""), req["scenes"], utils.storage_dir("local_videos", create=True))
@@ -273,11 +315,13 @@ def render(jid, req, dest):
             import director
             try:
                 def _prog(n, _j=jid):
+                    _chk(_j, req)
                     if _j in jobs:
                         jobs[_j]["dprog"] = max(int(n), int(jobs[_j].get("dprog") or 0))
 
                 def _log(m, _j=jid):
                     print(m, flush=True)
+                    _chk(_j, req)
                     if _j in jobs and m.startswith("director: Using backup"):
                         jobs[_j]["notice"] = "Using backup images: " + m[23:]
                     if _j in jobs and m.startswith("director: "):
@@ -308,10 +352,15 @@ def render(jid, req, dest):
                     req["_director"] = {k: d[k] for k in ("look", "report", "critique", "hook", "draft")}
                     if jid in jobs:
                         jobs[jid]["script"] = d["script"]
+            except Stopped:
+                raise
             except Exception as e:
+                _chk(jid, req)
                 print("director failed, using classic pipeline:", redact(str(e))[:200], flush=True)
         for attempt in range(3):  # Gemini sometimes returns a transient 503
+            _chk(jid, req)
             res = tm.start(jid, make_params(req), stop_at="video")
+            _chk(jid, req)
             vids = (res or {}).get("videos") or []
             err = str((sm.state.get_task(jid) or {}).get("error") or "")
             if vids or not ("script" in err or "terms" in err):
@@ -320,9 +369,11 @@ def render(jid, req, dest):
         if not vids:
             t = sm.state.get_task(jid) or {}
             raise RuntimeError(t.get("error") or t.get("message") or "generation failed (no video)")
+        _chk(jid, req)
         shutil.move(vids[0], dest)
         return (res or {}).get("script", "")
     finally:
+        stop_watch.set()
         shutil.rmtree(tdir, ignore_errors=True)
         for f in Path(utils.storage_dir("local_videos", create=True)).glob(jid[:8] + "_*"):
             f.unlink(missing_ok=True)
@@ -352,7 +403,8 @@ def run_long(lid, j):
         j["part"] = f"Part {n + 1} of {len(parts)}"; save_history()
         pid = f"{lid[:8]}-p{n + 1}-{uuid.uuid4().hex[:6]}"
         preq = {k: v for k, v in r.items() if k not in ("parts", "done", "meta", "used", "scenes", "_local")}
-        preq.update(script=parts[n], topic="", _user=j["user"], _long=True, keep_script=True)
+        _chk(lid)
+        preq.update(script=parts[n], topic="", _user=j["user"], _long=True, keep_script=True, _root=lid)
         pm = r.get("part_music") if isinstance(r.get("part_music"), list) else []
         if n < len(pm) and pm[n]:  # per-part / per-chapter track ("none" = silence for this part)
             if pm[n] == "none":
@@ -375,6 +427,7 @@ def run_long(lid, j):
                          voice=j["voice"], created=time.time(), elapsed=round(time.time() - j["started"]), video=str(dest),
                          parent=lid)
         done.append(pid); save_history(); _up.push(pid)
+    _chk(lid)
     j["part"] = "Joining parts"; save_history()
     files = []
     for p in done:  # parts may only be in Drive after a restart
@@ -395,7 +448,9 @@ def run_long(lid, j):
 def worker():
     while True:
         jid = jobq.get()
-        j = jobs[jid]
+        j = jobs.get(jid)
+        if not j or j.get("status") == "stopped":
+            jobq.task_done(); continue
         j.update(status="running", started=time.time())
         try:
             if j.get("kind") == "long":
@@ -406,6 +461,14 @@ def worker():
                 j.update(status="done", video=str(dest), script=render(jid, j["req"], dest))
                 _up.push(jid)
         except Exception as e:  # noqa: BLE001
+            if isinstance(e, Stopped) or jid in _CANCEL:
+                j.update(status="stopped", error=None, stage="", part=None)
+                for f in OUT_DIR.glob(jid + "*.mp4"):  # partial output (and finished long-form parts)
+                    f.unlink(missing_ok=True)
+                for k in [k for k, v in jobs.items() if v.get("parent") == jid]:
+                    jobs.pop(k, None)
+                print(f"job {jid[:8]} stopped by user", flush=True)
+                continue
             msg = redact(e)
             if "quota" in msg.lower() or "429" in msg or "credits" in msg.lower():
                 msg = "A free API limit was reached (" + msg[:160] + "). Try again later or pick a free Edge voice."
@@ -420,6 +483,7 @@ def worker():
             for k in [k for k, v in jobs.items() if v.get("status") == "done" and not Path(v["video"]).exists() and not v.get("drive")]:
                 jobs.pop(k, None)
             j.pop("req", None)
+            _CANCEL.discard(jid)
             save_history()
             jobq.task_done()
 
@@ -1022,6 +1086,41 @@ def status(jid: str, req: Request):
         out["flow"] = j.get("flow", "")
         out["elapsed"] = round(time.time() - j["started"])
     return out
+
+
+def _close_flow_for(jid):
+    """Drop this render's pending Flow tasks: the helper stops getting them on its next poll (no more credits spent)."""
+    if not FLOW_DIR.exists():
+        return 0
+    n = 0
+    for f in FLOW_DIR.glob("*.json"):
+        if f.name.startswith(("keys", "prefs_", "chars_", "music_", "flowmeta")):
+            continue
+        fj = _fload(f.stem)
+        if fj and not fj.get("closed") and (fj.get("render") == jid or str(fj.get("render") or "").startswith(jid[:8] + "-p")):
+            fj.update(closed=True, cancelled=True); _fsave(fj); n += 1
+    return n
+
+
+@app.post("/api/jobs/{jid}/cancel")
+def cancel_job(jid: str, req: Request):
+    """Stop generation: owner (or an admin) stops a queued or running Short / long-form job."""
+    u = current_user(req)
+    j = jobs.get(jid)
+    if not u or not j or (j.get("user") != u and not is_admin(u)):
+        return JSONResponse({"error": "not found"}, 404)
+    if j["status"] not in ("queued", "running"):
+        return JSONResponse({"error": "This video is not generating any more.", "status": j["status"]}, 409)
+    _CANCEL.add(jid)
+    flows = _close_flow_for(jid)
+    if j["status"] == "queued":
+        j.update(status="stopped", error=None); _CANCEL.discard(jid)
+    else:
+        j["stage"] = "Stopping…"
+        threading.Thread(target=lambda: (_kill_ffmpeg(jid[:8])), daemon=True).start()
+    save_history()
+    print(f"job {jid[:8]} stop requested by {u} (flow tasks dropped: {flows})", flush=True)
+    return {"ok": True, "status": j["status"], "flow_tasks_dropped": flows}
 
 
 @app.get("/api/history")
@@ -1787,7 +1886,7 @@ def flow_runner(user, jid, req):
             got = sum(1 for x in j["filled"] if x)
             if jid in jobs:
                 jobs[jid]["stage"] = f"Waiting for Google Flow clips {got}/{n}"
-            if got == n or j.get("failed") or not flow_online(user):
+            if got == n or j.get("failed") or not flow_online(user) or _stopped(jid, req):
                 break
             time.sleep(5)
         out = {}
@@ -1796,6 +1895,7 @@ def flow_runner(user, jid, req):
             if p:
                 out[i] = {"path": str(p), "model": up.get("model") or "Google Flow", "video": up.get("video"), "score": up.get("score")}
         j["closed"] = True; _fsave(j)
+        _chk(jid, req)
         return out
     return run
 
