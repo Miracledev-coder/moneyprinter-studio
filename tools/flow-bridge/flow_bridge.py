@@ -8,7 +8,7 @@ the clips, and this helper uploads each new file to the next empty scene of your
   python3 flow_bridge.py --job flow-xxxx.json --folder ~/Downloads/my-project
 
 Experimental: --drive uses gflow-cli (https://github.com/ffroliva/gflow-cli, unofficial) to drive Flow
-with your own signed-in Chrome, slowly (75-120 s between prompts) with a daily cap of 50. Use at your own risk.
+with your own signed-in Chrome, at a human pace (about 15 s between prompts, configurable) with a daily cap of 50. Use at your own risk.
 No password is ever asked for or stored. Python standard library only.
 """
 import argparse, getpass, json, mimetypes, os, random, re, shutil, subprocess, sys, time, urllib.request, uuid
@@ -92,6 +92,30 @@ for _s in (sys.stdout, sys.stderr):  # Windows consoles (cp1252) must not crash 
         pass
 
 
+def patch_gflow():
+    """gflow-cli 0.92.1 fetches Flow's signed media URL with max_redirects=0, but Flow's migrated host now answers
+    with a 302 to its Google CDN, so every finished clip 'fails' to download. Allow a few redirects (the signed URL is
+    already checked to be a Google host). Idempotent; re-applied after every gflow upgrade."""
+    py = Path.home() / ".local/share/uv/tools/gflow-cli" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    try:
+        d = subprocess.run([str(py) if py.exists() else sys.executable, "-c", "import gflow_cli,os;print(os.path.dirname(gflow_cli.__file__))"],
+                           capture_output=True, text=True, timeout=60).stdout.strip()
+        n = 0
+        for rel in ("api/transports/migrated_composer.py", "api/transports/migrated_recover.py"):
+            f = Path(d) / rel
+            if f.exists():
+                t = f.read_text()
+                u = re.sub(r'(route="flow-content\.google",\s*)max_redirects=0,', r"\1max_redirects=3,", t)
+                if u != t:
+                    f.write_text(u); n += 1
+                    for c in (f.parent / "__pycache__").glob(f.stem + ".*.pyc"):
+                        c.unlink(missing_ok=True)
+        if n:
+            print(f"[auto] patched gflow-cli download redirects ({n} file(s))", flush=True)
+    except Exception as e:
+        print(f"[auto] could not patch gflow-cli downloads ({type(e).__name__})", flush=True)
+
+
 def gflow_bin():
     for c in (shutil.which("gflow"), str(Path.home() / ".local/bin/gflow"), str(Path.home() / ".local/bin/gflow.exe")):
         if c and Path(c).exists():
@@ -125,18 +149,138 @@ def hstat(state, msg):
 
 
 def _run(cmd, folder):
+    """Run gflow, echo its output live, keep the tail in r.out so failures can be classified."""
+    tail = []
     try:
-        return subprocess.run(cmd, cwd=folder, timeout=TASK_TIMEOUT)
+        pr = subprocess.Popen(cmd, cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+        t0 = time.time()
+        for line in pr.stdout:
+            print(line, end="", flush=True); tail.append(line); del tail[:-300]
+            if time.time() - t0 > TASK_TIMEOUT:
+                raise subprocess.TimeoutExpired(cmd, TASK_TIMEOUT)
+        pr.wait(timeout=max(5, TASK_TIMEOUT - (time.time() - t0)))
+        r = subprocess.CompletedProcess(cmd, pr.returncode)
     except subprocess.TimeoutExpired:
+        try:
+            pr.kill()
+        except Exception:
+            pass
         print(f"[auto] Flow did not finish this generation within {TASK_TIMEOUT // 60} min; giving up on it (it stays open for a manual upload).", flush=True)
         hstat("error", f"A Flow generation timed out after {TASK_TIMEOUT // 60} min")
-        return subprocess.CompletedProcess(cmd, 124)
+        r = subprocess.CompletedProcess(cmd, 124)
+    r.out = "".join(tail)
+    return r
+
+
+UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+
+
+def download_failed(out):
+    """True when the clip/image WAS generated (and billed) but only the download failed."""
+    return bool(re.search(r"MediaDownloadError|signed media URL|data download|no signed media URL|download returned HTTP", out or ""))
+
+
+def model_rejected(out):
+    """Only a real 'model not available/accepted' error may fall back to another model."""
+    return not download_failed(out) and bool(re.search(r"(unknown|unsupported|invalid|not available|not accepted|no such|unrecognized)[^\n]{0,40}model|model[^\n]{0,60}(unknown|unsupported|not available|not accepted|invalid|unavailable)", out or "", re.I))
+
+
+def media_ids(out):
+    """Media ids gflow names in a download error (dedup, in order)."""
+    ids = []
+    for line in (out or "").splitlines():
+        if re.search(r"media|download|data download", line, re.I):
+            for m in UUID.findall(line):
+                if m.lower() not in ids:
+                    ids.append(m.lower())
+    return ids
+
+
+def recover(gflow, mid, out, tries=4):
+    """`gflow data download <id>`: Flow issues a fresh signed link for an already-billed clip. Spends no credits."""
+    tmp = STATE / "rec" / mid; shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(parents=True)
+    for i in range(tries):
+        print(f"[auto] recovering media {mid[:8]} with `gflow data download` (no credits) … try {i + 1}/{tries}", flush=True)
+        r = _run([gflow, "data", "download", mid, "--out", str(tmp)], str(tmp))
+        got = sorted((p for p in tmp.glob("*.*") if p.stat().st_size > 0), key=lambda p: p.stat().st_mtime)
+        if r.returncode == 0 and got:
+            dst = out.with_suffix(got[-1].suffix); shutil.move(str(got[-1]), str(dst)); return dst
+        if "exit 11" in r.out or "Video only" in r.out:
+            break  # gflow can only re-fetch videos by id
+        time.sleep((20, 60, 120, 180)[min(i, 3)])
+    return None
+
+
+def _pending(update=None):
+    f = STATE / "pending-downloads.json"
+    cur = json.loads(f.read_text()) if f.exists() else []
+    if update is not None:
+        STATE.mkdir(exist_ok=True); f.write_text(json.dumps(update, indent=1)); return update
+    return cur
+
+
+def recover_pending(gflow):
+    """Retry downloads of clips that were generated (billed) but never landed. Run on start and via --recover."""
+    left = []
+    for it in _pending():
+        out = Path(it["out"])
+        if out.exists() or list(out.parent.glob(out.stem + ".*")):
+            continue
+        if not out.parent.exists():
+            out.parent.mkdir(parents=True, exist_ok=True)
+        got = recover(gflow, it["media_id"], out, tries=2)
+        print(f"[auto] {'recovered ' + got.name if got else 'still could not download ' + it['media_id'][:8]}", flush=True)
+        if not got:
+            left.append(it)
+    _pending(left)
+    return left
+
+
+PROJECT_TITLE = "MoneyPrinter Studio"
+
+
+def _cfg(update=None):
+    f = STATE / "config"
+    c = json.loads(f.read_text()) if f.exists() else {}
+    if update:
+        c.update(update); STATE.mkdir(exist_ok=True); f.write_text(json.dumps(c, indent=1))
+    return c
+
+
+def flow_project(gflow, fresh=False):
+    """One Flow project for everything: find or create 'MoneyPrinter Studio', remember its id in ~/.flow-bridge/config."""
+    pid = None if fresh else _cfg().get("project_id")
+    if pid:
+        return pid
+    try:
+        if not fresh:
+            r = subprocess.run([gflow, "project", "list", "--json", "--limit", "200"], capture_output=True, text=True, timeout=60)
+            for p in (json.loads(r.stdout or "{}").get("projects") or []):
+                if p.get("title") == PROJECT_TITLE:
+                    pid = p["project_id"]; break
+        if not pid:
+            r = subprocess.run([gflow, "project", "create", "--name", PROJECT_TITLE, "--json"], capture_output=True, text=True, timeout=300)
+            pid = json.loads(r.stdout or "{}").get("project_id")
+    except Exception as e:
+        print(f"[auto] could not set up the '{PROJECT_TITLE}' Flow project ({type(e).__name__}); gflow will use its own", flush=True)
+    if pid:
+        _cfg({"project_id": pid}); print(f"[auto] using Flow project '{PROJECT_TITLE}' ({pid})", flush=True)
+    return pid
+
+
+def project_gone(out):
+    return bool(re.search(r"project[^\n]{0,80}(not found|does not exist|deleted|404|no longer)", out or "", re.I))
 
 
 def drive(job, folder, cap, pace=None):
     """Route A/B: gflow-cli drives labs.google/flow in a real, headed Chrome with your own signed-in profile.
-    One scene at a time, 75-120 s apart, daily cap. Each file is saved as NN_scene.ext so it lands in the right scene."""
-    pace = pace or tuple(int(x) for x in (os.environ.get("FLOW_PACE") or "75,120").split(",")[:2])
+    One scene at a time, ~15 s apart (Studio Account > Flow, --pace or FLOW_PACE), daily cap. Each file is saved as NN_scene.ext so it lands in the right scene."""
+    env = os.environ.get("FLOW_PACE")
+    if not pace and env:
+        pace = tuple(max(10, int(x)) for x in (env.split(",") * 2)[:2])
+    if not pace and job.get("pace"):
+        b = max(10, int(job["pace"])); pace = (max(10, b - 2), b + 3)
+    pace = pace or (13, 18)
     gflow = gflow_bin()
     if not gflow:
         print("[auto] gflow-cli is not installed; using the manual route (VEO Automation / drag-and-drop)."); return False
@@ -184,6 +328,9 @@ def drive(job, folder, cap, pace=None):
         agent = kind == "image" and job.get("agent_brief")
         if agent:  # optional: Flow Agent instruction card for this generation (free; keeps style + characters consistent)
             cmd += ["-i", job["agent_brief"][:600]]
+        proj = flow_project(gflow)
+        if proj:
+            cmd += ["--project", proj]
         if alias:
             cmd += ["--model", alias]
         hstat("working", f"Generating scene {sc['n']}/{len(job['scenes'])}: {kind} · {model or 'Flow default'}")
@@ -192,13 +339,30 @@ def drive(job, folder, cap, pace=None):
         if r.returncode == DRIFT:
             print("[auto] Flow's page changed and gflow-cli can't find its buttons (exit 23). Stopping automation;"
                   " finish the remaining scenes by hand (prompts.txt) or update:  uv tool upgrade gflow-cli"); return False
-        if r.returncode and r.returncode != DRIFT and agent and not out.exists():
+        if r.returncode and proj and project_gone(r.out) and not download_failed(r.out):
+            print(f"[auto] the '{PROJECT_TITLE}' Flow project is gone; creating it again")
+            np = flow_project(gflow, fresh=True)
+            if np:
+                cmd[cmd.index("--project") + 1] = np; r = _run(cmd, folder)
+        if r.returncode and download_failed(r.out):  # generated + billed; only the download failed: NEVER regenerate
+            ids, got = media_ids(r.out), None
+            print(f"[auto] scene {sc['n']} was generated but its download failed; fetching it again by id (no credits)", flush=True)
+            for mid in ids:
+                got = recover(gflow, mid, out)
+                if got:
+                    break
+            if got:
+                r = subprocess.CompletedProcess(cmd, 0); r.out = ""
+            else:
+                _pending(_pending() + [{"job": job["job"], "scene": sc["n"], "media_id": m, "out": str(out)} for m in ids[:1]])
+                print(f"[auto] saved media id(s) {', '.join(m[:8] for m in ids) or '?'}; run  flow-bridge --recover  later (no credits)", flush=True)
+        elif r.returncode and r.returncode not in (DRIFT, 124) and agent and not out.exists() and not model_rejected(r.out):
             print("[auto] Flow Agent instruction was not accepted on this account; retrying without it")
             i = cmd.index("-i"); cmd = cmd[:i] + cmd[i + 2:]
             r = _run(cmd, folder)
-        if r.returncode and alias:
+        if r.returncode and alias and model_rejected(r.out):
             print(f"[auto] '{alias}' was not accepted; retrying with Flow's default model")
-            r = _run(cmd[:-2], folder)
+            i = cmd.index("--model"); r = _run(cmd[:i] + cmd[i + 2:], folder)
         if not out.exists() and kind == "image" and my:  # i2i wrote into tmp: move it in with the scene number
             new = sorted((STATE / "tmp").glob("*.*"), key=lambda p: p.stat().st_mtime)
             if new:
@@ -217,7 +381,7 @@ KEYF = Path.home() / ".flow-bridge" / "key"
 BASEF = Path.home() / ".flow-bridge" / "base"
 LOGF = Path.home() / ".flow-bridge" / "helper.log"
 LABEL = os.environ.get("FLOW_ACCOUNT", "")
-VERSION = "2026.10.31.4"
+VERSION = "2026.10.31.5"
 DEFAULT_BASE = "https://moneyprinter-studio.onrender.com"
 RAW = "https://raw.githubusercontent.com/Miracledev-coder/moneyprinter-studio/main/tools/flow-bridge/flow_bridge.py"
 AGENT = "com.calmcraze.flowbridge"
@@ -558,9 +722,22 @@ def main():
     ap.add_argument("--status", action="store_true", help="show pairing, auto-start and connection status")
     ap.add_argument("--unpair", action="store_true", help="forget this computer's pairing and remove auto-start")
     ap.add_argument("--background", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--pace", type=int, help="seconds between Flow generations (min 10; default: your Studio setting, else ~15)")
+    ap.add_argument("--recover", action="store_true", help="re-download clips that Flow generated but that failed to download (no credits)")
     ap.add_argument("--version", action="version", version=VERSION)
     ap.add_argument("--cap", type=int, default=50, help="daily cap for --drive (default 50, same as the Studio limit)")
     a = ap.parse_args()
+    if a.pace:
+        os.environ["FLOW_PACE"] = f"{max(10, a.pace)},{max(10, a.pace) + 3}"
+    if gflow_bin():
+        patch_gflow()
+    if a.recover:
+        g = gflow_bin()
+        if not g:
+            sys.exit("gflow-cli is not installed")
+        left = recover_pending(g)
+        print("All pending downloads recovered." if not left else f"{len(left)} download(s) still pending; try again later.")
+        return
     if a.manual:
         a.drive = False
     if a.signin:
@@ -609,6 +786,11 @@ def main():
             key = a.token or (KEYF.read_text().strip() if KEYF.exists() else "") or ("" if a.background else getpass.getpass("Paste your bridge key from Studio (hidden), or re-run with --pair: ").strip())
         if not key:
             sys.exit("Not paired yet: flow-bridge --connect https://moneyprinter-studio.onrender.com --pair")
+        if gflow_bin() and _pending():
+            try:
+                recover_pending(gflow_bin())
+            except Exception as e:
+                print(f"[auto] pending downloads: {type(e).__name__}", flush=True)
         return connect(a.connect, key, folder, a.drive, a.cap, a.background)
     job = json.loads(Path(a.job).expanduser().read_text())
     token = a.token or getpass.getpass("Paste the upload token from Studio (hidden): ").strip()

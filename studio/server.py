@@ -356,6 +356,8 @@ def render(jid, req, dest):
                 raise
             except Exception as e:
                 _chk(jid, req)
+                if getattr(e, "fatal", False):  # e.g. Flow not signed in: fail clearly, never silently swap to stock
+                    raise
                 print("director failed, using classic pipeline:", redact(str(e))[:200], flush=True)
         for attempt in range(3):  # Gemini sometimes returns a transient 503
             _chk(jid, req)
@@ -1500,7 +1502,7 @@ def flow_engine_get(req: Request):
     return {"engine": _prefs(u).get("engine", "flow") if is_admin(u) else "flow", "online": flow_online(u), "connected": u in _keys(),
             "free_models": is_admin(u), "ai_gate": ai_gate(u),
             "models": aiv.MODELS, "video_model": _prefs(u).get("video_model", "lite"), "image_model": _prefs(u).get("image_model", "pro"),
-            "video_models": TIERS, "image_models": ITIERS}
+            "video_models": TIERS, "image_models": ITIERS, "pace": int(_prefs(u).get("pace", 15))}
 
 
 # Google Flow credits per generation, from Google's help page "Manage your Google Flow credits"
@@ -2127,6 +2129,11 @@ async def flow_engine_set(req: Request):
         pr["video_model"] = b["video_model"]
     if b.get("image_model") in ITIERS:
         pr["image_model"] = b["image_model"]
+    if "pace" in b:
+        try:
+            pr["pace"] = max(10, min(300, int(b["pace"])))
+        except (TypeError, ValueError):
+            pass
     FLOW_DIR.mkdir(parents=True, exist_ok=True); (FLOW_DIR / f"prefs_{_ufx(u)}.json").write_text(_json.dumps(pr))
     return pr
 
@@ -2170,6 +2177,7 @@ async def flow_ping(req: Request):
             if j and j["user"] == u and not j.get("closed") and time.time() - j["created"] < 7 * 86400 and not all(j["filled"]):
                 out.append({"job": j["id"], "upload_url": str(req.base_url).rstrip("/") + "/api/flow/upload", "aspect": j["aspect"],
                             "duration": j["duration"], "auto": bool(j.get("auto")), "story_bible": j["meta"].get("bible", ""), "agent_brief": j.get("agent_brief", ""),
+                            "pace": int(_prefs(u).get("pace", 15)),
                             "references": [{"name": r, "url": "/char/" + r} for r in sorted({r for rs in (j["meta"].get("char_refs") or []) for r in rs})],
                             "scenes": [{"n": i + 1, "type": _kind(j, i), "model": j.get("models", [""] * 99)[i], "sentence": t,
                                         "prompt": _fprompt(j, i), "advanced": _sadv(j, i), "filled": bool(j["filled"][i]),

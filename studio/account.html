@@ -27,7 +27,9 @@ ul.fine{color:#a6a1c0;font-size:13px;padding-left:18px;margin:12px 0 0}ul.fine l
 <ul class=fine><li>Flow is linked <b>per account</b>, like Drive. Your AI scenes are made in <b>your own</b> Google Flow account by a small helper on your Mac or PC; Studio never sees your Google password.</li>
 <li>The pairing code works once and expires in 10 minutes. Studio stores only a scrambled (hashed) copy of the helper’s key.</li>
 <li>Your Flow jobs go only to your helper, and it can only upload into your own scenes. Unlink stops the helper at once.</li>
-<li id=fnote></li></ul></section>
+<li id=fnote></li></ul><p style="margin-top:10px"><label>Pause between Flow generations <input type=number id=fpace min=10 max=300 step=1 style="width:80px"> seconds</label> <span class=fine id=fpacemsg>Default 15 s (min 10). Daily cap stays 50 generations.</span></p>
+<script>(()=>{const i=document.getElementById('fpace'),m=document.getElementById('fpacemsg');fetch('/api/flow/engine').then(r=>r.json()).then(d=>{i.value=d.pace||15});
+i.addEventListener('change',async()=>{let v=Math.max(10,Math.min(300,parseInt(i.value)||15));i.value=v;const r=await fetch('/api/flow/engine',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pace:v})});m.textContent=r.ok?`Saved: about ${v} s between generations (applies to the next scene).`:'Could not save'})})()</script></section>
 <section class=card><h2>Session</h2><p>You stay signed in for 30 days if “Remember me” was ticked.</p><a class="btn ghost" href="/logout">Sign out</a> {{ADMIN}}</section>
 </main></div></div>
 <script>

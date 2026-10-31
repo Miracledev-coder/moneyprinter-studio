@@ -4,6 +4,7 @@
  <div id=sp_models style="display:none;gap:8px;margin-top:8px;flex-wrap:wrap;font-size:13px"><label>Flow image <select id=sp_img><option value=pro>Nano Banana Pro</option><option value=nb2>Nano Banana 2</option><option value=lite>Nano Banana 2 Lite</option></select></label>
   <label>Flow video <select id=sp_vid><option value=lite>Veo 3.1 Lite</option><option value=fast>Veo 3.1 Fast</option><option value=quality>Veo 3.1 Quality</option><option value=omni>Omni Flash</option></select></label></div>
  <label id=sp_agent_l style="display:flex;gap:6px;align-items:center;font-size:12px;margin-top:6px;color:#c9c4ea"><input type=checkbox id=sp_agent style="width:auto"> Use Flow Agent instructions for images (keeps style + characters consistent; free, beta)</label>
+ <label id=sp_vhook_l style="display:flex;gap:6px;align-items:center;font-size:13px;margin-top:8px;padding:7px 10px;border:1px solid #3b3766;border-radius:10px;background:#1c1a36;color:#e9e6ff;cursor:pointer"><input type=checkbox id=sp_vhook style="width:auto"> <b>🎥 Video hook</b>&nbsp;<span id=sp_vhook_t style="color:#c9c4ea;font-size:12px">scene 1 is a moving Veo clip (uses Flow credits). Off = images only, 0 credits.</span></label>
  <div id=sp_hint style="font-size:12px;color:#9c97c0;margin-top:6px;line-height:1.45"></div>
 </div>
 <script>
@@ -17,6 +18,8 @@
  window.ccPresetVal=()=>s.value;
  const ag=document.getElementById('sp_agent');ag.checked=localStorage.getItem('mps_flow_agent')=='1';ag.onchange=()=>localStorage.setItem('mps_flow_agent',ag.checked?'1':'0');
  {const pa=window.ccExtra;window.ccExtra=b=>Object.assign(pa(b)||{},{flow_agent:ag.checked})}
+ const vh=document.getElementById('sp_vhook');vh.checked=localStorage.getItem('mps_vhook')!='0';
+ {const pa=window.ccExtra;window.ccExtra=b=>Object.assign(pa(b)||{},{flow_video_hook:vh.checked,flow_images_only:!vh.checked})}
  const fi=document.getElementById('fimg')||document.getElementById('sp_img'),fv=document.getElementById('fvid')||document.getElementById('sp_vid');
  if(fi.id=='sp_img'){document.getElementById('sp_models').style.display='flex';const pv=window.ccExtra;window.ccExtra=b=>Object.assign(pv(b)||{},{flow_image_model:fi.value,flow_video_model:fv.value})}
  fetch('/api/flow/engine').then(r=>r.json()).then(d=>{if(d.image_model)fi.value=d.image_model;if(d.video_model)fv.value=d.video_model});
@@ -25,11 +28,14 @@
  const lab={lite:'Veo 3.1 Lite',fast:'Veo 3.1 Fast',quality:'Veo 3.1 Quality',omni:'Omni Flash'};
  const secs=()=>{const ls=document.getElementById('ls');if(ls){const w=(ls.value.trim().match(/\S+/g)||[]).length;return w/150*60}const L=document.getElementById('length');return L?(parseFloat(L.value)||30):30};
  const upd=()=>{if(!C)return;const s=secs(),shots=Math.max(1,Math.ceil(s/3)),vmax=Math.max(1,Math.floor(shots/5)),c=vc(fv.value,4);
+  const bal=C.balance!=null?` · <b>${C.balance.toLocaleString()} credits left</b> <small>(read by your helper ${new Date(C.balance_at*1000).toLocaleTimeString()})</small>`:' · balance: connect the Flow helper to see it';
+  document.getElementById('sp_vhook_t').textContent=vh.checked?`scene 1 is a moving ${lab[fv.value]} clip · ${c}–${c*vmax} credits. Off = images only, 0 credits.`:'off: images only · 0 credits (daily image quota). Turn on for a moving first scene.';
+  if(!vh.checked){est.innerHTML=`💳 <b>Est. Flow credits for this video: 0</b> · ~${shots} images, video hook off (images use the free daily quota)`+bal;return}
   est.innerHTML=`💳 <b>Est. Flow credits for this video: ${c*1}–${c*vmax}</b> · ~${shots} shots: ${shots-1}–${shots-vmax} images (0 credits, daily quota) + 1–${vmax} video clip${vmax>1?'s':''} × ${c} (${lab[fv.value]}, 4 s, 720p). Prices for non-Ultra plans${fv.value=='lite'||fv.value=='fast'?' (Ultra pays half)':''}. <a href="${C.source}" target=_blank style="color:#b9a6ff">Google's price list</a>`+
    (C.balance!=null?` · <b>${C.balance.toLocaleString()} credits left</b> <small>(read by your helper ${new Date(C.balance_at*1000).toLocaleTimeString()})</small>`:' · balance: connect the Flow helper to see it');};
  fetch('/api/flow/costs').then(r=>r.ok?r.json():null).then(d=>{if(!d)return;C=d;
   [...fv.options].forEach(o=>{const v=C.video[o.value];if(!v)return;o.textContent=lab[o.value]+' · '+(v.by_sec?`${v.by_sec['4']}–${v.by_sec['10']} cr (4–10 s)`:v.std==v.ultra?`${v.std} cr`:`${v.std} cr (Ultra ${v.ultra})`)});
   [...fi.options].forEach(o=>{if(!/·/.test(o.textContent))o.textContent+=' · 0 cr (daily quota)'});upd()});
- fv.addEventListener('change',upd);document.addEventListener('input',e=>{if(['ls','length'].includes(e.target.id))upd()});document.addEventListener('change',e=>{if(e.target.id=='length')upd()});
+ fv.addEventListener('change',upd);vh.addEventListener('change',()=>{localStorage.setItem('mps_vhook',vh.checked?'1':'0');upd()});document.addEventListener('input',e=>{if(['ls','length'].includes(e.target.id))upd()});document.addEventListener('change',e=>{if(e.target.id=='length')upd()});
  const save=()=>fetch('/api/flow/engine',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({image_model:fi.value,video_model:fv.value})});fi.addEventListener('change',save);fv.addEventListener('change',save)})();
 </script>
