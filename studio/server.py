@@ -1736,7 +1736,9 @@ def flow_runner(user, jid, req):
         n = len(lines)
         scs = (meta or {}).get("scenes") or []
         want = [bool(i < len(scs) and isinstance(scs[i], dict) and scs[i].get("video")) for i in range(n)]
-        if any(want):  # the director chose which shots need motion (capped: Veo spends Flow credits)
+        if req.get("flow_images_only"):  # stills only (Nano Banana Pro: 0 credits), no Veo clips
+            kinds = ["image"] * n
+        elif any(want):  # the director chose which shots need motion (capped: Veo spends Flow credits)
             cap_v, kinds = max(1, n // 5), []
             for i in range(n):
                 kinds.append("video" if want[i] and kinds.count("video") < cap_v else "image")
