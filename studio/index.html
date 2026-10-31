@@ -1,0 +1,48 @@
+<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>MoneyPrinter Studio by Calm Craze Creatives</title>
+<link rel=icon href="/static/favicon.svg"><link rel=apple-touch-icon href="/static/icon-192.png"><meta name=theme-color content="#0b0a1a"><link rel=stylesheet href="/static/cc-theme.css"></head><body>
+<div class=cc-shell>{{SHELL}}<div>{{HEADER}}
+<main class=cc-main id=create>
+<h1 class=cc-h1>What video should we make?</h1><p class=cc-sub>Describe a topic, or paste your own script. We write, voice, and edit it with stock footage.</p>
+<div style="text-align:center"><div class=cc-tabs id=mode><button class=on data-v=topic>Topic</button><button data-v=script>My script</button></div></div>
+<div class=cc-prompt>
+<textarea id=prompt placeholder="e.g. 3 habits of calm, productive people"></textarea>
+<div class=cc-bar>
+<label class=cc-chip title="Aspect ratio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="3" width="10" height="18" rx="2"/></svg><select id=aspect><option value="9:16">9:16</option><option value="16:9">16:9</option></select></label>
+<label class=cc-chip title="Length"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><select id=length><option value=short>~15s</option><option value=medium>~40s</option><option value=long>~75s</option></select></label>
+<label class=cc-chip title="Voice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><select id=voice>{{VOICES}}</select></label>
+<span class=cc-chip id=subs data-on=1 title="Subtitles"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 14h4M13 14h4"/></svg>Subtitles</span>
+<span class=cc-chip id=music data-on=1 title="Background music"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>Music</span>
+<button class=cc-btn id=go>✦ Generate</button></div>
+<details class=cc-adv><summary>Advanced settings</summary><div class=cc-grid2>
+<div class=cc-field><label>Subtitle style</label><select id=sub_style><option value=classic>Classic white</option><option value=bold>Bold yellow</option><option value=boxed>Boxed</option></select></div>
+<div class=cc-field><label>Subtitle position</label><select id=sub_pos><option value=bottom>Bottom</option><option value=center>Center</option><option value=top>Top</option></select></div>
+<div class=cc-field><label>Subtitle size</label><input id=font_size type=number min=24 max=80 value=48></div>
+<div class=cc-field><label>Clip duration (s)</label><input id=clip type=number min=2 max=8 value=4></div>
+<div class=cc-field><label>Speaking speed</label><select id=rate><option value=0.9>Slower</option><option value=1.0 selected>Normal</option><option value=1.1>Faster</option></select></div>
+</div></details></div>
+<div class=cc-err id=msg style="text-align:center;margin-top:12px;font-size:14px"></div>
+<div class=cc-sec id=gallery><h2>My videos</h2><span>One video renders at a time · typical 1–4 min</span></div>
+<div class=cc-gallery id=grid></div>
+</main></div></div>
+<script>
+const $=id=>document.getElementById(id);let mode='topic';const voiceName={};[...$('voice').options].forEach(o=>voiceName[o.value]=o.text.split(' —')[0]);
+$('mode').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('mode').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');mode=b.dataset.v;$('prompt').placeholder=mode=='topic'?'e.g. 3 habits of calm, productive people':'Paste the narration you want spoken…';$('prompt').style.minHeight=mode=='topic'?'96px':'170px'});
+['subs','music'].forEach(id=>$(id).onclick=()=>{const on=$(id).dataset.on=='1'?'0':'1';$(id).dataset.on=on;$(id).classList.toggle('off',on=='0')});
+const stages=[[0,'Writing the script'],[10,'Recording the voice-over'],[30,'Finding stock footage'],[50,'Editing the video'],[90,'Finishing up']];
+function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function card(j){const wide=j.aspect=='16:9'?' wide':'';let m;
+ if(j.status=='done')m=`<video controls playsinline preload=metadata src="/video/${j.id}"></video>`;
+ else if(j.status=='error')m=`<div class=cc-prog><div class=cc-err>Failed</div><div>${esc(j.error)}</div></div>`;
+ else{const p=j.progress||0;const st=j.status=='queued'?`In queue · ${j.ahead||0} ahead`:(stages.filter(s=>p>=s[0]).pop()[1]+'…');m=`<div class=cc-prog><div class=cc-ring></div><div>${st}</div><div class=cc-pbar><div style="width:${Math.max(3,p)}%"></div></div><div>${j.elapsed||0}s</div></div>`}
+ const right=j.status=='done'?`<a class=cc-dl href="/video/${j.id}?dl=1">Download</a>`:'';
+ return `<div class=cc-card><div class="media${wide}">${m}</div><div class=meta><b title="${esc(j.title)}">${esc(j.title)}</b><div class=row><span>${j.aspect} · ${esc(j.voice)}${j.status=='done'?' · '+j.elapsed+'s':''}</span>${right}</div></div></div>`}
+let last='';async function refresh(){const r=await fetch('/api/history');if(r.status==401){location.reload();return}const d=await r.json();
+ const html=d.length?d.map(card).join(''):'<div class=cc-empty>Your generated videos will appear here.</div>';
+ const key=JSON.stringify(d);if(key!=last){last=key;$('grid').innerHTML=html}
+ const busy=d.some(j=>j.status=='queued'||j.status=='running');setTimeout(refresh,busy?3000:20000)}
+$('go').onclick=async()=>{const t=$('prompt').value.trim();$('msg').textContent='';if(!t){$('msg').textContent='Describe a topic or paste a script first.';return}
+ const b={topic:mode=='topic'?t:'',script:mode=='script'?t:'',aspect:$('aspect').value,length:$('length').value,voice:$('voice').value,subtitles:$('subs').dataset.on=='1',music:$('music').dataset.on=='1',sub_style:$('sub_style').value,sub_pos:$('sub_pos').value,clip:+$('clip').value,rate:+$('rate').value,font_size:+$('font_size').value};
+ $('go').disabled=true;const r=await fetch('/api/generate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const d=await r.json();$('go').disabled=false;
+ if(!r.ok){$('msg').textContent=d.error||'Something went wrong.';return}$('prompt').value='';last='';refresh();$('gallery').scrollIntoView({behavior:'smooth'})};
+refresh();
+</script></body></html>
