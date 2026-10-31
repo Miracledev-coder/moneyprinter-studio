@@ -297,7 +297,7 @@ def render(jid, req, dest):
                                     visuals=ai_allowed(req.get("_user", ""), req),
                                     ai_style=aiv_norm(req.get("ai_style")),
                                     ai_prompts=[clean_text(x, 300) for x in (req.get("ai_prompts") or [])][:40] or None,
-                                    keep_script=bool(req.get("keep_script")), chars=chars_for(req),
+                                    keep_script=bool(req.get("keep_script")), chars=chars_for(req), preset=preset_of(req),
                                     free_ai=is_admin(req.get("_user", "")),
                                     flow=flow_runner(req.get("_user", ""), jid, req) if flow_engine(req.get("_user", ""), req) else None)
                 if jid in jobs:
@@ -352,7 +352,7 @@ def run_long(lid, j):
         j["part"] = f"Part {n + 1} of {len(parts)}"; save_history()
         pid = f"{lid[:8]}-p{n + 1}-{uuid.uuid4().hex[:6]}"
         preq = {k: v for k, v in r.items() if k not in ("parts", "done", "meta", "used", "scenes", "_local")}
-        preq.update(script=parts[n], topic="", _user=j["user"])
+        preq.update(script=parts[n], topic="", _user=j["user"], _long=True, keep_script=True)
         pm = r.get("part_music") if isinstance(r.get("part_music"), list) else []
         if n < len(pm) and pm[n]:  # per-part / per-chapter track ("none" = silence for this part)
             if pm[n] == "none":
@@ -454,7 +454,7 @@ PAGE = ((HERE / "index.html").read_text()
         .replace("{{LONG}}", (HERE / "static/cc-long.html").read_text())
         .replace("{{PREVIEW}}", (HERE / "static/cc-preview.html").read_text())
         .replace("{{SUBADV}}", (HERE / "static/cc-subadv.html").read_text())
-        .replace("{{CHARS}}", (HERE / "static/cc-chars.html").read_text())
+        .replace("{{CHARS}}", (HERE / "static/cc-chars.html").read_text() + (HERE / "static/cc-presets.html").read_text())
         .replace("{{HEADER}}", (HERE / "static/cc-header.html").read_text())
         .replace("{{APP}}", "MoneyPrinter Studio"))
 LOGIN = (Path(__file__).parent / "login.html").read_text()
@@ -465,7 +465,7 @@ SUBS += "<script>" + _ix[_ix.index("const PRESETS="):_ix.index("</script>", _ix.
 SUBS += _ix[_ix.index("<script>(()=>{const g=i=>document.getElementById(i);['sub_bold'"):].split("</script>")[0] + "</script>"
 LONGP = ((HERE / "longform.html").read_text().replace("{{SUBS}}", SUBS)
          .replace("{{SUBADV}}", (HERE / "static/cc-subadv.html").read_text())
-         .replace("{{CHARS}}", (HERE / "static/cc-chars.html").read_text()).replace("{{SHELL}}", (HERE / "static/cc-shell.html").read_text())
+         .replace("{{CHARS}}", (HERE / "static/cc-chars.html").read_text() + (HERE / "static/cc-presets.html").read_text()).replace("{{SHELL}}", (HERE / "static/cc-shell.html").read_text())
          .replace("{{HEADER}}", (HERE / "static/cc-header.html").read_text()).replace("{{APP}}", "MoneyPrinter Studio"))
 LOCKED = "<h2 style='font-family:sans-serif;text-align:center;margin-top:20vh'>🔒 MoneyPrinter Studio is locked.<br><small>The owner must set APP_USERS.</small></h2>"
 
@@ -487,7 +487,22 @@ def ai_allowed(u, req):
 
 
 def aiv_norm(v):
-    return v if v in ("realistic", "pixar", "stick") else "realistic"
+    import stylepresets as sp
+    return v if v in ("realistic", "pixar", "stick") or sp.get(v) else "realistic"
+
+
+def preset_of(req):
+    import stylepresets as sp
+    v = req.get("style_preset")
+    if v is None and req.get("_long"):
+        v = sp.DEFAULT_LONG  # long-form defaults to the Ancient explainer (Ink) look
+    return v if sp.get(v) else None
+
+
+@app.get("/api/presets")
+def api_presets():
+    import stylepresets as sp
+    return {"presets": sp.public(), "default_long": sp.DEFAULT_LONG}
 
 
 @app.get("/healthz")
@@ -960,7 +975,9 @@ async def api_long(req: Request):
     if b.get("dry"):
         out = {"parts": [{"words": len(p.split()), "start": p[:90]} for p in parts], "minutes": round(words / lf.WPM, 1)}
         if b.get("meta"):
-            out["meta"] = await run_in_threadpool(lf.meta, clean_text(b.get("title"), 90) or script[:60], parts)
+            import stylepresets as sp
+            pr = sp.get(preset_of({**b, "_long": True}))
+            out["meta"] = await run_in_threadpool(lf.meta, clean_text(b.get("title"), 90) or script[:60], parts, sp.title_hint(pr) if pr else "")
         return out
     if any(v.get("user") == user and v.get("kind") == "long" and v["status"] in ("queued", "running") for v in jobs.values()):
         return JSONResponse({"error": "You already have a long video rendering. Let it finish first."}, 429)
@@ -1461,7 +1478,7 @@ def _model(kind, vm=None, adv=None):
         return ITIERS.get(adv.get("itier"), "Nano Banana Pro") if kind == "image" else TIERS.get(adv.get("tier"), "Veo 3.1 - Lite")
     if kind == "image":
         return aiv.MODELS["image"]
-    return aiv.MODELS["video_alt"] if vm == "omni" else aiv.MODELS["video"]
+    return TIERS.get(vm) or aiv.MODELS["video"]  # lite | fast | quality | omni (Omni Flash, up to 10 s, 7 refs)
 
 
 def _keys():
@@ -1553,14 +1570,36 @@ def flow_runner(user, jid, req):
     def run(lines, prompts, meta):
         token = secrets.token_urlsafe(24)
         n = len(lines)
-        kinds = ["video" if (i == 0 and req.get("flow_video_hook", True)) else "image" for i in range(n)]
+        scs = (meta or {}).get("scenes") or []
+        want = [bool(i < len(scs) and isinstance(scs[i], dict) and scs[i].get("video")) for i in range(n)]
+        if any(want):  # the director chose which shots need motion (capped: Veo spends Flow credits)
+            cap_v, kinds = max(1, n // 5), []
+            for i in range(n):
+                kinds.append("video" if want[i] and kinds.count("video") < cap_v else "image")
+        else:
+            kinds = ["video" if (i == 0 and req.get("flow_video_hook", True)) else "image" for i in range(n)]
+        wpm = 160
+        try:
+            import stylepresets as sp
+            wpm = (sp.get(req.get("style_preset")) or {}).get("words_per_minute", 160)
+        except Exception:
+            pass
+        sadv = {str(i): {"duration": max(4, round(len(lines[i].split()) / wpm * 60 + 0.5))} for i in range(n) if kinds[i] == "video"}
+        prompts = list(prompts)
+        for i in range(n):  # video shots: the director's motion + camera move go into the Veo prompt
+            if kinds[i] == "video" and i < len(scs) and isinstance(scs[i], dict) and "Motion:" not in prompts[i]:
+                prompts[i] = f"{prompts[i]}. Motion: {scs[i].get('motion') or 'subtle movement'}; camera {scs[i].get('camera_move') or 'slow push-in'}"[:1400]
         j = {"id": uuid.uuid4().hex, "user": user, "th": hashlib.sha256(token.encode()).hexdigest(), "created": time.time(),
              "aspect": req.get("aspect") or "9:16", "duration": 8, "style": req.get("ai_style") or "realistic", "texts": lines,
              "prompts": prompts, "meta": meta, "filled": [None] * n, "kinds": kinds, "auto": True, "render": jid,
              "models": [_model(k, req.get("video_model") or _prefs(user).get("video_model")) for k in kinds]}
-        if isinstance(req.get("flow_adv"), dict):  # long-form / scene editor Advanced panel
-            j["adv"] = flow_adv(req["flow_adv"])
+        pf = _prefs(user)
+        pick = {k: v for k, v in (("itier", req.get("flow_image_model") or pf.get("image_model")),
+                                  ("tier", req.get("flow_video_model") or req.get("video_model") or pf.get("video_model"))) if v}
+        if isinstance(req.get("flow_adv"), dict) or pick:  # model pickers (long-form / Shorts) or the scene editor panel
+            j["adv"] = flow_adv(dict(req.get("flow_adv") if isinstance(req.get("flow_adv"), dict) else {}, **pick))
             j["models"] = [_model(k, adv=j["adv"]) for k in kinds]
+        j["sadv"] = {i: flow_adv(v, flow_adv(j.get("adv") or {})) for i, v in sadv.items()}
         _fsave(j)
         if jid in jobs:
             jobs[jid]["flow"] = j["id"]
@@ -1673,7 +1712,8 @@ def flow_engine_get(req: Request):
     import aivisuals as aiv
     return {"engine": _prefs(u).get("engine", "flow") if is_admin(u) else "flow", "online": flow_online(u), "connected": u in _keys(),
             "free_models": is_admin(u), "ai_gate": ai_gate(u),
-            "models": aiv.MODELS, "video_model": _prefs(u).get("video_model", "lite")}
+            "models": aiv.MODELS, "video_model": _prefs(u).get("video_model", "lite"), "image_model": _prefs(u).get("image_model", "pro"),
+            "video_models": TIERS, "image_models": ITIERS}
 
 
 @app.post("/api/flow/engine")
@@ -1685,8 +1725,10 @@ async def flow_engine_set(req: Request):
     pr = _prefs(u)
     if b.get("engine") in ("flow", "free"):
         pr["engine"] = b["engine"]
-    if b.get("video_model") in ("lite", "omni"):
+    if b.get("video_model") in TIERS:
         pr["video_model"] = b["video_model"]
+    if b.get("image_model") in ITIERS:
+        pr["image_model"] = b["image_model"]
     FLOW_DIR.mkdir(parents=True, exist_ok=True); (FLOW_DIR / f"prefs_{_ufx(u)}.json").write_text(_json.dumps(pr))
     return pr
 

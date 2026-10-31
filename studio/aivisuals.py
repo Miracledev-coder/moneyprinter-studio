@@ -30,6 +30,12 @@ STYLE_NAMES = {"realistic": "photorealistic cinematic documentary", "pixar": "3D
                         "character is the same stick figure every scene with one identifying detail (e.g. a cap or tie)"}
 
 
+import stylepresets as _sp
+for _id, _p in _sp.P.items():  # director style presets act as extra image styles (template + negative + bible)
+    STYLES[_id] = _p.get("visual_style", "")
+    STYLE_NAMES[_id] = _p.get("visual_style", "") + " " + _sp.bible_hint(_p)
+
+
 def norm_style(v):
     return v if v in STYLES else "realistic"
 
@@ -39,6 +45,15 @@ MODELS = {"image": "Nano Banana Pro", "video": "Veo 3.1 - Lite", "video_alt": "O
 
 
 def _assemble(sc, bible, style, aspect, target):
+    pr = _sp.get(style)
+    if pr:
+        parts = [_sp.fill(pr, sc, bible, aspect), sc.get("camera", "")]
+        if bible:
+            parts.append(f"Story bible: {bible}")
+        if target == "video":
+            parts.append(f"Motion: {sc.get('motion') or 'subtle movement'}; camera {sc.get('camera_move') or 'slow push-in'} ({_sp.motion(pr)[:200]})")
+        parts.append(f"Avoid: {pr.get('negative_prompt') or NEGATIVE}")
+        return ". ".join(re.sub(r"\s+", " ", str(x)).strip(" .") for x in parts if x)[:1400]
     tok = STYLES.get(style, STYLES["realistic"])
     parts = [sc.get("subject_action", ""), sc.get("setting", ""), sc.get("camera", ""), sc.get("lighting_mood", "")]
     if bible:
@@ -58,11 +73,12 @@ First write a STORY BIBLE used in every scene for consistency: recurring charact
 Then for EACH numbered narration line write a scene that LITERALLY depicts what the line says (accuracy first: the exact subject, number, place, action).
 - If the topic or line concerns Nigeria / Lagos / Africa, show that place and Black Nigerian people explicitly (yellow danfo buses, okada, Third Mainland Bridge, Lagos markets, Nigerian clothing). Never generic Western cities.
 - Abstract lines (statistics, feelings, calls to action): pick one concrete, visual metaphor in the same world.
-- No readable text or signs. One clear focal point. Vary shot types across scenes.
+- No readable text or signs (except a short "label" when the style uses handwritten labels/concept cards; set "card": true for a white-background concept card). One clear focal point. Vary shot types across scenes.
 Lines:
 """ + "\n".join(f"{i+1}. {l}" for i, l in enumerate(lines)) + """
 Return JSON {"bible": "60-90 words", "cast": "...", "world": "...", "scenes": [{"subject_action": "...", "setting": "place, era, props",
-"camera": "shot type, angle, lens", "lighting_mood": "lighting, mood, colour", "motion": "what moves (for video)", "camera_move": "dolly/pan/etc"}]}
+"camera": "shot type, angle, lens", "lighting_mood": "lighting, mood, colour", "motion": "what moves (for video)", "camera_move": "dolly/pan/etc", "label": "optional 1-3 word on-image label or empty", "card": false, "video": false}]}
+Set "video": true only where real motion tells the story (an action, a process, a reveal); at most 1 scene in 5. Stills get Ken Burns.
 with exactly one scene per line.""", temp=0.5)
     scs = [x if isinstance(x, dict) else {"subject_action": str(x)} for x in (d.get("scenes") or [])][:len(lines)]
     while len(scs) < len(lines):

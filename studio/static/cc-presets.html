@@ -1,0 +1,21 @@
+<div id=cc-presets class=cc-pre style="margin:10px 0;padding:10px 12px;border:1px solid #2c2a45;border-radius:12px;background:#15142a">
+ <label style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b style="font-size:13px">🎬 Style preset</b>
+  <select id=style_preset style="flex:1;min-width:200px"><option value="">None (use the AI style above)</option></select></label>
+ <div id=sp_models style="display:none;gap:8px;margin-top:8px;flex-wrap:wrap;font-size:13px"><label>Flow image <select id=sp_img><option value=pro>Nano Banana Pro</option><option value=nb2>Nano Banana 2</option><option value=lite>Nano Banana 2 Lite</option></select></label>
+  <label>Flow video <select id=sp_vid><option value=lite>Veo 3.1 Lite</option><option value=fast>Veo 3.1 Fast</option><option value=quality>Veo 3.1 Quality</option><option value=omni>Omni Flash</option></select></label></div>
+ <div id=sp_hint style="font-size:12px;color:#9c97c0;margin-top:6px;line-height:1.45"></div>
+</div>
+<script>
+(()=>{const s=document.getElementById('style_preset'),h=document.getElementById('sp_hint'),E=x=>String(x||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+ const isLong=!!document.getElementById('cc-long')||/\/long/.test(location.pathname);let P=[];
+ const show=()=>{const p=P.find(x=>x.id==s.value);localStorage.setItem(isLong?'mps_preset_long':'mps_preset',s.value);
+  h.innerHTML=p?`${E(p.visual_style)}<br><b>Pacing:</b> ~${p.avg_shot_seconds}s per image (long sentences get several), hard cuts, Ken Burns.<br><b>Subtitles:</b> ${E(p.subtitle_style)}<br><b>Music:</b> ${E(p.music_mood)}<br><b>Title ideas:</b> ${p.title_formulas.map(E).join(' · ')}`:'Pick a preset to copy the look, pacing, hook and script structure of a reference channel.'};
+ fetch('/api/presets').then(r=>r.json()).then(d=>{P=d.presets||[];s.insertAdjacentHTML('beforeend',P.map(p=>`<option value="${E(p.id)}">${E(p.name)}</option>`).join(''));
+  const saved=localStorage.getItem(isLong?'mps_preset_long':'mps_preset');s.value=saved!=null&&(saved==''||P.some(p=>p.id==saved))?saved:(isLong?d.default_long:'');show()});
+ s.onchange=show;const prev=window.ccExtra;window.ccExtra=b=>Object.assign(prev?prev(b)||{}:{},{style_preset:s.value});
+ window.ccPresetVal=()=>s.value;
+ const fi=document.getElementById('fimg')||document.getElementById('sp_img'),fv=document.getElementById('fvid')||document.getElementById('sp_vid');
+ if(fi.id=='sp_img'){document.getElementById('sp_models').style.display='flex';const pv=window.ccExtra;window.ccExtra=b=>Object.assign(pv(b)||{},{flow_image_model:fi.value,flow_video_model:fv.value})}
+ fetch('/api/flow/engine').then(r=>r.json()).then(d=>{if(d.image_model)fi.value=d.image_model;if(d.video_model)fv.value=d.video_model});
+ const save=()=>fetch('/api/flow/engine',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({image_model:fi.value,video_model:fv.value})});fi.addEventListener('change',save);fv.addEventListener('change',save)})();
+</script>

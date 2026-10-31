@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "source_refs": ["os0KUojqFXo", "49_Ph2q6uIM", "CTCTAW5o5Zk"],
+  "presets": [
+    {
+      "id": "ancient_ink",
+      "name": "Ancient explainer (Ink style)",
+      "visual_style": "Hand-drawn ink pen sketch, slightly wobbly black lines, flat muted watercolor fills (sand beige, ochre, teal sky, campfire orange). Cute minimalist characters: big round head, dot eyes, simple stick limbs. About 30% of shots are white-background concept cards with one doodle object and handwritten all-caps text; red X-outs for 'not this'.",
+      "image_prompt_template": "Hand-drawn ink sketch illustration, wobbly black pen lines, flat muted watercolor fill, simple cute stick-figure cartoon style, 16:9. Scene: {scene_description}. Characters: {character_refs}. Setting: {setting}, {time_of_day}. Mood: {mood}. {optional_text_label: 'handwritten all-caps label reading \"{label}\"'}. Clean composition, lots of negative space, YouTube explainer style.",
+      "negative_prompt": "photorealistic, 3D render, CGI, anime, manga, detailed realistic faces, gradients, glossy, lens flare, watermark, logo, extra limbs, deformed hands, garbled text, misspelled text, cluttered background",
+      "character_bible_template": {
+        "id": "{char_id}",
+        "name": "{name}",
+        "look": "round oversized head, two dot eyes, small expressive mouth, {hair} hair, stick arms and legs",
+        "outfit": "{outfit, e.g. brown fur tunic with jagged hem}",
+        "props": "{signature prop, e.g. wooden spear}",
+        "contrast_character": "modern 'you': bald white stick figure, plain office clothes"
+      },
+      "avg_shot_seconds": 3.0,
+      "hook_shot_seconds": 1.8,
+      "shots_per_sentence": 1.15,
+      "camera_motion_rules": ["Ken Burns on every still: zoom 1.00->1.08 or slow lateral pan over shot length", "push-in on reveals and questions", "hard cuts only; no crossfades", "white concept cards: tiny zoom or static", "split-screen for then-vs-now"],
+      "subtitle_style": "Optional; if used: bold rounded sans, white with black outline, 1-3 words per line pop-in, lower third. On-image key words handled by handwritten labels.",
+      "music_mood": "soft lo-fi / acoustic ambient, low (-28 dB under voice); SFX: whoosh on text cards, fire crackle, record-scratch on twists",
+      "words_per_minute": 210,
+      "script_structure_template": ["HOOK (0-30s): modern 'you' pain point -> 'Now rewind {N} years' -> ancient person's contrast", "MYTH (30-60s): 'Your brain is already fighting this...' official story vs buried proof", "QUESTION: title question + 'to answer that we have to start in the ground'", "EVIDENCE x3-5 chapters, each with a twist ('But it's the opposite')", "DAY-IN-THE-LIFE walkthrough morning -> night", "PAYOFF: what we lost; loop back to modern alarm clock", "CTA: soft subscribe tied to next question"],
+      "hook_formulas": ["This morning, {modern annoyance} happened to you. Now rewind {N} years.", "Your brain is already fighting this. {common belief}. That was the official story. But the proof it's wrong was {where}.", "So how does a man with {none of X} end up with more {Y} than you?"],
+      "title_formulas": ["What Did Ancient Humans Actually Do {time_period}?", "How Did Ancient Humans Survive {threat}?", "When Did Ancient Humans Start {modern habit}?", "The Disturbing Ways Ancient Humans {did X}", "Why Are We the Only {thing} Left?"],
+      "example_scene_prompts": [
+        {"line": "This morning, a machine screamed at you until you woke up.", "prompt": "Hand-drawn ink sketch, wobbly lines, white background: a red analog alarm clock shaking violently with jagged scream lines, bald stick figure in bed covering ears, 16:9"},
+        {"line": "He owns a spear, two animal hides, and a fire.", "prompt": "Hand-drawn ink sketch, flat watercolor: caveman with messy brown hair, round head, dot eyes, brown fur tunic, sitting up stretching beside a small campfire, wooden spear and two hides on the ground, golden morning light over sandy plain, 16:9"},
+        {"line": "The strong skeleton belonged to the hunter-gatherer. The wrecked one belonged to the farmer.", "prompt": "Hand-drawn ink sketch, white background: two skeletons side by side, left tall and sturdy labeled handwritten 'HUNTER', right short and cracked labeled 'FARMER', archaeologist stick figure with brush looking surprised, 16:9"}
+      ]
+    },
+    {
+      "id": "ottoman_days",
+      "name": "Ottoman Days style (history role-play)",
+      "visual_style": "Cute minimalist stick-figure characters (round heads, dot eyes) placed in richly painted 2D Ottoman interiors and cityscapes: Iznik blue tiles, latticed windows, carpets, domes and minarets, Bosphorus at sunset. Palette teal, terracotta, gold, crimson, cream. Costume encodes rank. Interleaved white caption cards (dark all-caps text), boxed name tags, portrait medallions with role labels, simple bar charts and family trees.",
+      "image_prompt_template": "2D digital storybook illustration, soft painterly backgrounds, simple cute cartoon characters with round heads and dot eyes, 16:9. Setting: {ottoman_location} ({year}), Iznik tiles, latticed windows, warm {lighting}. Scene: {scene_description}. Characters: {character_refs} wearing {costume}. {optional_label: 'small boxed name tag reading \"{name}\"'}. Historical explainer style.",
+      "negative_prompt": "photorealistic, 3D, anime, realistic faces, modern clothing, European castle, Arabic gibberish text, garbled letters, watermark, gore, extra limbs, oversaturated neon",
+      "character_bible_template": {
+        "id": "{char_id}",
+        "name": "{name}",
+        "role": "{Sultan | Valide | princess | pasha | servant}",
+        "look": "round head, dot eyes, {skin tone}, {facial hair}",
+        "headwear": "{tall white kavuk turban | jeweled crown with veil | red fez}",
+        "kaftan": "{color} kaftan with {pattern}",
+        "label_card": "{NAME} / {ROLE}"
+      },
+      "avg_shot_seconds": 3.0,
+      "hook_shot_seconds": 2.8,
+      "shots_per_sentence": 1.25,
+      "camera_motion_rules": ["Ken Burns on all painted scenes, slow pans across wide palace rooms", "caption/text cards static or 3% zoom with whoosh", "zoom into name tag or medallion when a person is introduced", "hard cuts; 'X YEARS LATER' card for time skips"],
+      "subtitle_style": "Text cards carry key facts; optional captions in serif cream text with dark shadow, bottom center.",
+      "music_mood": "gentle Middle-Eastern / Ottoman-inspired ambient (oud, ney, soft percussion), low under voice; occasional drum hit on reveals",
+      "words_per_minute": 215,
+      "script_structure_template": ["HOOK: modern relatable scene -> 'Now imagine' Ottoman version with twist -> hard date + number", "TITLE QUESTION: 'So why did it suck to be {role}?' + secondary question", "PREMISE: 'You're going to live her life from the very first day. You're built from several real people; every rule is real.'", "LIFE STAGES: birth -> childhood -> marriage/office -> crisis -> death/legacy, each with named real figures and a number", "TWISTS every 60-90s ('The real rule')", "ENDING: verdict on whether it sucked + tease next role"],
+      "hook_formulas": ["You're at {modern event}. {What normally happens}. Now imagine {Ottoman version} where {shocking difference}.", "In {year}, the palace in Istanbul {did X} and spent {number}.", "So why did it suck to be {role}? And why were {others} more afraid of {event} than she was?"],
+      "title_formulas": ["Why It Sucked to Be the {Role} (in the Ottoman Empire)", "What Did the {Role} Actually Do All Day?", "What Actually Happened When You Became the {Role}?", "What Did Ottomans Do for {Activity}? (It Was Actually {Adjective})"],
+      "example_scene_prompts": [
+        {"line": "She's carried through the streets behind a wall of red satin, and the people cheer for a curtain.", "prompt": "2D storybook illustration: crowded Istanbul street, cute round-headed onlookers cheering, servants carrying a tall red satin curtained litter, domes and minarets behind, warm afternoon light, 16:9"},
+        {"line": "In the summer of 1562, the palace in Istanbul married off three princesses... more than 50,000 gold coins.", "prompt": "White background caption card, bold dark all-caps text '50,000+ GOLD COINS' with a small stack of gold coins doodle, 16:9"},
+        {"line": "Your father is a prince, a son of Sultan Suleiman, the man Europe calls the Magnificent.", "prompt": "2D storybook illustration: Topkapi palace room with blue Iznik tiles and lattice window, cute round-headed Sultan Suleiman in tall white turban and gold kaftan holding a swaddled baby, small boxed name tag 'SULTAN SULEIMAN', soft gold light, 16:9"}
+      ]
+    },
+    {
+      "id": "science_joe",
+      "name": "Science explainer (Joe style)",
+      "visual_style": "Clean flat 2D digital illustration, crisp black outlines, soft cel shading, warm earthy palette with bright skies. Mix of white-background stick-figure concept shots and fully painted landscapes; heavy infographic use: labeled comparisons, maps with migration arrows, family trees, DNA, lineups.",
+      "image_prompt_template": "Clean flat 2D vector-style illustration, crisp black outlines, soft cel shading, friendly cartoon characters, {background: 'plain white background' | 'painted {environment}'}, 16:9. Scene: {scene_description}. Characters: {character_refs}. Infographic elements: {labels_or_arrows_or_map}. Educational YouTube explainer.",
+      "negative_prompt": "photorealistic, 3D, anime, horror, gore, garbled text, misspelled labels, watermark, cluttered, dark moody lighting, extra limbs",
+      "character_bible_template": {"id": "{char_id}", "name": "{name}", "look": "simple cartoon human, oval head, dot eyes, {skin tone}, {hair}", "outfit": "{outfit}", "props": "{props}", "narrator_avatar": "white stick figure with round head used for 'you'/concept shots"},
+      "avg_shot_seconds": 3.9,
+      "hook_shot_seconds": 3.5,
+      "shots_per_sentence": 1.3,
+      "camera_motion_rules": ["slow Ken Burns (zoom 1.00->1.05) on every still", "pan along maps following migration arrows", "split-screen for A vs B comparisons", "hard cuts; occasional quick cut to text card for chapter titles"],
+      "subtitle_style": "Chapter title cards in black all-caps hand lettering on white; optional clean sans captions.",
+      "music_mood": "calm curious ambient / light piano and pads, quiet (voice at about -19 dB mean)",
+      "words_per_minute": 145,
+      "script_structure_template": ["HOOK: 'It's roughly {N} years ago. You're {who}...' -> surprising claim -> big question", "'Let's start at the beginning' chapter", "3-5 named chapters (spoken headers like 'The Asian shortcut'), each: mechanism -> evidence -> analogy", "Myth-busting section", "Wrap-up: what it means for us today"],
+      "hook_formulas": ["It's roughly {N} years ago. You're a {thing}, not a {a}, not a {b}, just a {plain}.", "If you could {impossible observation}, one thing would immediately jump out: {surprise}.", "Which raises a surprisingly interesting question: {title question}"],
+      "title_formulas": ["Why Do Humans Have {trait}?", "Why Do {group} {surprising fact}?", "How Did {thing} Actually Evolve?"],
+      "example_scene_prompts": [
+        {"line": "You're a human, not a king, not a farmer, not a philosopher, just a regular Homo sapiens standing somewhere in East Africa.", "prompt": "Flat 2D illustration, painted African savanna with acacia and baobab trees, lone dark-skinned prehistoric man in fur tunic holding a spear, hot bright sky, 16:9"},
+        {"line": "Imagine two students taking the same math test. Both get the correct answer, but they use completely different methods.", "prompt": "Flat 2D illustration on plain white background, two cartoon students at desks with test papers, each with different scribbled working in thought bubbles, both with green check marks, 16:9"},
+        {"line": "For almost 90% of Homo sapiens history, everyone lived in Africa.", "prompt": "Flat 2D infographic map of Africa in warm tones, many tiny cartoon humans clustered across the continent, hand-lettered label '90% OF HUMAN HISTORY', rest of world faded, 16:9"}
+      ]
+    }
+  ]
+}

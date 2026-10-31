@@ -52,7 +52,7 @@ RULES = """Short-form rules (TikTok/Reels/Shorts):
 
 
 def write_script(topic, secs, given="", style=""):
-    st = f"\nFORMAT (follow it, it overrides generic structure): {style[:600]}" if style else ""
+    st = f"\nFORMAT (follow it, it overrides generic structure): {style[:1200]}" if style else ""
     lo, hi = round(secs * 2.3 * 0.9), round(secs * 2.3 * 1.05)
     src = (f"Rewrite this script into a stronger short video, keeping its facts and intent:\n{given}" if given
            else f"Topic: {topic}")
@@ -80,7 +80,7 @@ Return JSON {{"script": "the full narration, one sentence per line"}}""", temp=0
             "hook_before": r.get("hook_score_before"), "hook_after": r.get("hook_score_after")}
 
 
-def sentences(text):
+def sentences(text, cap=24):
     s = [x.strip() for x in re.split(r"(?<=[.!?])\s+|\n+", text) if x.strip()]
     out = []
     for x in s:  # merge very short fragments so no shot is under ~1.2s
@@ -88,7 +88,7 @@ def sentences(text):
             out[-1] += " " + x
         else:
             out.append(x)
-    return out[:24]
+    return out[:cap]
 
 
 def plan_shots(lines, topic):
@@ -485,19 +485,30 @@ def join(clips, fades, xf, dst):
 
 
 def direct(jid, topic, script, secs, voice, rate, aspect, workdir, log=print, progress=None, crossfade=True, style="",
-           visuals="stock", ai_style="realistic", ai_prompts=None, keep_script=False, flow=None, chars=None, free_ai=True):
+           visuals="stock", ai_style="realistic", ai_prompts=None, keep_script=False, flow=None, chars=None, free_ai=True,
+           preset=None):
     """Full director pass. Returns dict(script, clips=[paths], clip_max, report)."""
     W, H = (1280, 720) if aspect == "16:9" else (720, 1280)  # same as the final render: less RAM, no double scaling
     workdir = Path(workdir); workdir.mkdir(parents=True, exist_ok=True)
     P = progress or (lambda n: None)
+    import stylepresets as sp
+    pr = sp.get(preset)
+    if pr:  # Style preset: script structure + hooks, ~3 s shots, hard cuts, preset image template
+        style = (sp.script_style(pr) + " " + (style or ""))[:1200]
+        ai_style = pr["id"]
+        if sp.hard_cuts(pr):
+            crossfade = False
+        log(f"director: style preset {pr['name']}")
     log("director: writing + critiquing script"); P(3)
     if script and keep_script:
         sc = {"script": script, "draft": script, "critique": "kept as written", "hook_before": "", "hook_after": ""}
     else:
         sc = write_script(topic or script[:120], secs, given=script if script and not topic else "", style=style)
     text = sc["script"]
-    lines = sentences(text)
+    lines = sentences(text, cap=60 if pr else 24)
     text = " ".join(lines)
+    if pr:
+        lines = sp.split_shots(lines, pr)[:60]
     log(f"director: planning {len(lines)} shots"); P(9)
     look, shots = plan_shots(lines, topic or text[:120])
     pools = candidates(shots, aspect != "16:9"); P(13)

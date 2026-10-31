@@ -46,7 +46,7 @@ checked without an account. Other projects reviewed: eddie-fqh/flow-py (CDP, vid
 They are kept as fallbacks if gflow-cli stalls.
 
 **Model mapping** (Studio → gflow): Nano Banana Pro → `nano-pro`, Nano Banana 2 → `nano2`, Imagen 4 → `image4`,
-Veo 3.1 Lite/Fast/Quality → `veo-lite`/`veo-fast`/`veo-quality`, Omni Flash → `omni-flash`.
+Veo 3.1 Lite/Fast/Quality → `veo-lite`/`veo-fast`/`veo-quality`, Omni Flash → `omni-flash` (up to 10 s clips, 7 reference images; Veo is capped at 8 s). Pick it in the Flow video picker on Shorts or Long-form; the choice is saved as your default.
 Override with `GFLOW_MODEL_MAP='{"Nano Banana Pro":"..."}'`.
 Character references are sent as `--ref` (image i2i, video r2v). Video durations are 4, 6, 8 or 10 s.
 

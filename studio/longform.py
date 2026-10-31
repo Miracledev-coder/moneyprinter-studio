@@ -28,11 +28,11 @@ def split_parts(script, max_words=380):
     return parts
 
 
-def meta(title, parts):
+def meta(title, parts, hint=""):
     prompt = ("You help publish long-form YouTube videos. Given the numbered parts of a narration, return JSON: "
               '{"sections": ["short chapter title for part 1", ...], "title": "catchy YouTube title under 70 chars", '
               '"description": "2-3 sentence YouTube description plus 3-5 hashtags"} with exactly ' + str(len(parts)) +
-              f" sections (each under 6 words).\nWorking title: {title}\n\n" +
+              f" sections (each under 6 words).\n{hint}\nWorking title: {title}\n\n" +
               "\n".join(f"{i+1}. {p[:500]}" for i, p in enumerate(parts)))
     try:
         d = _gemini(prompt, timeout=45)

@@ -10,55 +10,101 @@
 .lf .screen{aspect-ratio:16/9;border-radius:12px;overflow:hidden;position:relative;background:linear-gradient(135deg,#1b2735,#3a2a1a 60%,#111);border:1px solid #39345f}
 .lf .screen .sub16{position:absolute;left:5%;right:5%;bottom:7%;text-align:center;color:#fff;font-weight:700;text-shadow:0 0 3px #000,0 0 3px #000}
 .lf .screen .tag{position:absolute;top:8px;left:8px;font-size:10px;background:#0008;color:#fff;padding:3px 7px;border-radius:6px}
-.lf .secs{display:flex;flex-direction:column;gap:6px;max-height:320px;overflow:auto}.lf .sec{display:grid;grid-template-columns:54px 1fr;gap:8px;align-items:center;font-size:12px;color:#a8a3c7}
+.lf .secs{display:flex;flex-direction:column;gap:6px;max-height:320px;overflow:auto}.lf #ltracks{max-height:260px;overflow:auto}.lf #s6 .screen{max-width:640px}.lf .sec{display:grid;grid-template-columns:54px 1fr;gap:8px;align-items:center;font-size:12px;color:#a8a3c7}
 .lf .sec input{padding:6px 9px;font-size:13px}.lf .btn{background:#1c1936;color:#f4efe6;border:1px solid #39345f;border-radius:10px;padding:8px 12px;cursor:pointer;font-size:13px}
 .lf .go{width:100%;margin-top:14px;padding:13px;border:0;border-radius:12px;font-size:16px;font-weight:700;color:#fff;cursor:pointer;background:linear-gradient(90deg,#e8364a,#a855f7)}.lf .go:disabled{opacity:.5}
 .lf .job{border:1px solid #2a2550;border-radius:14px;padding:12px;margin-top:12px;background:#110f27}.lf .job b{color:#f4efe6}.lf .pbar{height:8px;background:#26224a;border-radius:9px;overflow:hidden;margin:8px 0}.lf .pbar div{height:100%;background:linear-gradient(90deg,#e8364a,#a855f7)}
 .lf .steps{display:flex;gap:4px;margin-top:6px}.lf .steps i{flex:1;height:5px;border-radius:4px;background:#26224a}.lf .steps i.d{background:#a855f7}.lf .steps i.r{background:#e8364a;animation:p 1.2s infinite}@keyframes p{50%{opacity:.4}}
 .lf video{width:100%;border-radius:10px;margin-top:8px;aspect-ratio:16/9;background:#000}.lf .yt div{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:12px;color:#a8a3c7}.lf .yt textarea{height:70px;font-size:12px}
+.lf .stepnav{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}.lf .stepnav a{font-size:12px;padding:6px 11px;border-radius:999px;background:#1c1936;color:#c9c4ea;border:1px solid #39345f;text-decoration:none}
+.lf .step{background:#141230;border:1px solid #2a2550;border-radius:16px;padding:16px;margin-top:14px}.lf .step>h2{margin:0 0 4px;font-size:16px;display:flex;gap:10px;align-items:center}.lf .step>h2 i{font-style:normal;width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(90deg,#e8364a,#a855f7);font-size:12px}
+.lf .hint{font-size:12px;color:#9c97c0;margin:2px 0 6px}.lf .trk{display:grid;grid-template-columns:1fr 130px 80px;gap:8px;align-items:center;font-size:13px;padding:6px 0;border-bottom:1px solid #221f40}.lf .trk audio{height:28px;width:100%}
+.lf .sec{grid-template-columns:54px 1fr 190px}.lf .cc-field{margin:0}.lf .stepbody{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:900px){.lf .stepbody{grid-template-columns:1fr}}
 </style></head><body>
 <div class=cc-shell>{{SHELL}}<div>{{HEADER}}
-<main class=lf>
+<main class=lf id=cc-long>
 <h1>YouTube Long-form <span class=badge>LONG · 16:9</span></h1>
-<p class=sub>Paste a long script. We split it into chapters, render each part in the background (1280×720, same voice and look, no repeated clips), join them, and write your YouTube title, description and chapters.</p>
-<div class=grid>
-<section class=box>
-<h3>Script</h3>
-<input id=lt placeholder="Working title, e.g. The Hidden Economy of Lagos">
+<p class=sub>Paste a long script and go step by step. We split it into chapters, render each part in the background (1280×720, same voice, look and characters, no repeated clips), join them, and write your YouTube title, description and chapters.</p>
+<nav class=stepnav><a href="#s1">1 Script</a><a href="#s2">2 Voice</a><a href="#s3">3 Visuals</a><a href="#s4">4 Music</a><a href="#s5">5 Parts &amp; chapters</a><a href="#s6">6 Subtitles &amp; render</a></nav>
+
+<section class=step id=s1><h2><i>1</i>Script</h2>
+<input id=lt placeholder="Working title, e.g. What Did Ancient Humans Actually Do at Night?">
 <label>Narration (1,500–3,000+ words · blank lines between paragraphs help the split)</label>
 <textarea id=ls placeholder="Paste your full script here…"></textarea>
-<div class=stat id=lstat></div><div class=warn id=lwarn></div>
-<div class=row><div><label>Voice</label><select id=lvoice>{{VOICES}}</select></div><div><label>Music</label><select id=lmusic><option value=1>Soft background music</option><option value=0>No music</option></select></div></div>
-<div class=row><div><label>Subtitles</label><select id=lsubs><option value=1>On · bottom</option><option value=0>Off</option></select></div><div><label>Subtitle size</label><input id=lfs type=range min=28 max=60 value=40></div></div>
-</section>
-<section>
-<div class=box><h3>Preview <small style="color:#a8a3c7;font-weight:400">landscape 1280×720</small></h3><div class=screen><span class=tag>16:9</span><div class=sub16 id=lprev>Lagos never sleeps, and neither does its economy</div></div></div>
-<div class=box style="margin-top:14px"><h3>Chapters <button class=btn id=lplan type=button>Plan chapters</button></h3><div class=secs id=lsecs><div style="font-size:12px;color:#a8a3c7">Paste your script, then click <b>Plan chapters</b>. You can rename every chapter before rendering.</div></div>
-<button class=go id=lgo disabled>▶ Render long video</button></div>
-</section></div>
+<div class=stat id=lstat></div><div class=warn id=lwarn></div></section>
+
+<section class=step id=s2><h2><i>2</i>Voice</h2><div class=stepbody>
+<div><label>Voice</label><select id=lvoice>{{VOICES}}</select><div class=hint>Free Edge voices suit long-form. ElevenLabs uses ~1 credit per character.</div></div>
+<div><label>Speed <span id=lratev>1.00×</span></label><input id=lrate type=range min=0.8 max=1.2 step=0.05 value=1></div></div></section>
+
+<section class=step id=s3><h2><i>3</i>Visuals</h2>
+<div class=stepbody><div><label>Visuals</label><select id=visuals><option value=ai>🎨 AI visuals (Google Flow)</option><option value=stock>🎞 Stock footage</option></select>
+<div class=hint>The director writes every prompt, decides image or video per shot, the clip length, and the camera motion. Stock is only a backup.</div>
+<input type=hidden id=ai_style value=stick></div>
+<div><label>Flow image model</label><select id=fimg><option value=pro>Nano Banana Pro</option><option value=nb2>Nano Banana 2</option><option value=lite>Nano Banana 2 Lite</option></select>
+<label>Flow video model</label><select id=fvid><option value=lite>Veo 3.1 Lite</option><option value=fast>Veo 3.1 Fast</option><option value=quality>Veo 3.1 Quality</option><option value=omni>Omni Flash</option></select>
+<div class=hint>Veo spends your Flow credits; the director uses video for at most 1 shot in 5.</div></div></div>
+{{CHARS}}</section>
+
+<section class=step id=s4><h2><i>4</i>Music</h2><div class=stepbody>
+<div><label>Default track</label><select id=lmusic><option value="">Random library track</option><option value=none>No music</option></select>
+<label>Volume <span id=lvolv>30</span>%</label><input id=lvol type=range min=0 max=100 value=30>
+<div class=row><div><label>Fade in (s)</label><input id=lfin type=number min=0 max=8 step=0.5 value=1.5></div><div><label>Fade out (s)</label><input id=lfout type=number min=0 max=10 step=0.5 value=2.5></div></div>
+<label style="display:flex;gap:8px;align-items:center"><input type=checkbox id=lduck checked style="width:auto"> Duck music under the voice</label></div>
+<div><label>Your music library <small>(up to 10 tracks · saved to your Drive)</small></label><div id=ltracks class=hint>Loading…</div>
+<label class=btn style="display:inline-block;margin-top:8px">⬆ Upload track<input type=file id=lup accept="audio/*" hidden></label> <span id=lupmsg class=hint></span>
+<div class=hint id=lmoodhint></div></div></div></section>
+
+<section class=step id=s5><h2><i>5</i>Parts &amp; chapters <button class=btn id=lplan type=button style="margin-left:auto">Plan chapters</button></h2>
+<div class=hint>Rename every chapter and choose a music track for each part (or keep the default).</div>
+<div class=secs id=lsecs><div class=hint>Paste your script, then click <b>Plan chapters</b>.</div></div></section>
+
+<section class=step id=s6><h2><i>6</i>Subtitles &amp; render</h2>
+<div class=box style="margin-bottom:10px"><h3>Preview <small style="color:#a8a3c7;font-weight:400">landscape 1280×720</small></h3><div class=screen><span class=tag>16:9</span><div class=sub16 id=lprev>Now rewind ten thousand years</div></div></div>
+<label style="display:flex;gap:8px;align-items:center"><input type=checkbox id=lsubs checked style="width:auto"> Burn subtitles into the video</label>
+<div class=cc-grid id=lsubwrap>{{SUBS}}</div>
+<details class=cc-adv><summary>Advanced subtitles</summary>{{SUBADV}}</details>
+<button class=go id=lgo disabled>▶ Render long video</button><div class=warn id=lgomsg></div></section>
+
 <section class=box style="margin-top:18px"><h3>Your long videos</h3><div id=ljobs><div style="color:#a8a3c7;font-size:13px">Nothing yet.</div></div></section>
 </main></div></div>
-<script>(()=>{const g=i=>document.getElementById(i),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));let plan=null,t;
-const sz=()=>{const w=g('lprev').parentElement.clientWidth;g('lprev').style.fontSize=(g('lfs').value*w/1280)+'px';g('lprev').style.display=g('lsubs').value=='1'?'':'none'};
-addEventListener('resize',sz);g('lfs').oninput=sz;g('lsubs').onchange=sz;sz();
+<script>(()=>{const g=i=>document.getElementById(i),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));let plan=null,t,tracks=[],tags={},moods=[];
+const sz=()=>{const w=g('lprev').parentElement.clientWidth,fs=g('font_size');g('lprev').style.fontSize=((fs?+fs.value:40)*w/1280)+'px';g('lprev').style.display=g('lsubs').checked?'':'none';g('lsubwrap').style.opacity=g('lsubs').checked?1:.4};
+addEventListener('resize',sz);document.addEventListener('input',e=>{if(/^sub_|font_size/.test(e.target.id||''))sz()});g('lsubs').onchange=sz;setTimeout(sz,50);
+g('lrate').oninput=()=>g('lratev').textContent=(+g('lrate').value).toFixed(2)+'×';g('lvol').oninput=()=>g('lvolv').textContent=g('lvol').value;
 const stat=()=>{const s=g('ls').value.trim(),w=s?s.split(/\s+/).length:0,parts=Math.max(1,Math.ceil(w/380)),el=g('lvoice').value.startsWith('elevenlabs:');
  g('lstat').textContent=w?`${w.toLocaleString()} words · ≈${(w/150).toFixed(1)} min · about ${parts} part${parts>1?'s':''}`:'';
  g('lwarn').innerHTML=(w?`⏱ Free server render time: roughly ${parts*8}–${parts*25} min in total. You can close this tab; it keeps going.`:'')+(el?`<br>⚠️ ElevenLabs would use ~${s.length.toLocaleString()} credits. Pick a free Edge voice for long-form.`:'');
  const m=s.match(/[^.!?]+[.!?]/);if(m)g('lprev').textContent=m[0].trim().slice(0,90);plan=null;g('lgo').disabled=true};
 g('ls').oninput=()=>{clearTimeout(t);t=setTimeout(stat,300)};g('lvoice').onchange=stat;
+const topts=sel=>`<option value="">Default track</option><option value=none ${sel=='none'?'selected':''}>No music</option>`+tracks.map(x=>`<option value="${esc(x.id)}" ${sel==x.id?'selected':''}>${esc(x.name)}${tags[x.id]&&tags[x.id].mood?' · '+esc(tags[x.id].mood):''}</option>`).join('');
+async function music(){const [a,b]=await Promise.all([fetch('/api/music').then(r=>r.json()),fetch('/api/music/tags').then(r=>r.json())]);tags=b.tags||{};moods=b.moods||[];
+ tracks=[...(a.mine||[]),...(a.library||[])];const keep=g('lmusic').value;g('lmusic').innerHTML=`<option value="">Random library track</option><option value=none>No music</option>`+tracks.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');g('lmusic').value=keep;
+ g('ltracks').innerHTML=tracks.length?tracks.map(x=>`<div class=trk><span>${esc(x.name)}<audio controls preload=none src="/music/${encodeURIComponent(x.id)}"></audio></span>${x.id.startsWith('up:')?`<select data-mood="${esc(x.id)}"><option value="">mood…</option>${moods.map(m=>`<option ${tags[x.id]&&tags[x.id].mood==m?'selected':''}>${m}</option>`).join('')}</select>`:'<small>library</small>'}<small>${x.id.startsWith('up:')?'yours':''}</small></div>`).join(''):'No tracks yet.';
+ document.querySelectorAll('[data-mood]').forEach(s=>s.onchange=async()=>{await fetch('/api/music/tags',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:s.dataset.mood,mood:s.value})});music()});
+ document.querySelectorAll('#lsecs select[data-pm]').forEach(s=>{const v=s.value;s.innerHTML=topts(v)})}
+g('lup').onchange=async()=>{const f=g('lup').files[0];if(!f)return;g('lupmsg').textContent='Uploading…';const fd=new FormData();fd.append('file',f);const r=await fetch('/api/music/upload',{method:'POST',body:fd});const d=await r.json();g('lupmsg').textContent=r.ok?'✓ Added '+d.name+(d.drive?' (saved to Drive)':''):d.error;music()};
 g('lplan').onclick=async()=>{const s=g('ls').value.trim();if(s.split(/\s+/).length<150){g('lwarn').textContent='Long-form needs at least ~150 words.';return}
- g('lplan').disabled=true;g('lplan').textContent='Planning…';const r=await fetch('/api/long',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({script:s,title:g('lt').value,dry:1,meta:1})});const d=await r.json();g('lplan').disabled=false;g('lplan').textContent='Re-plan';
+ g('lplan').disabled=true;g('lplan').textContent='Planning…';const r=await fetch('/api/long',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({script:s,title:g('lt').value,dry:1,meta:1,style_preset:(g('style_preset')||{}).value||''})});const d=await r.json();g('lplan').disabled=false;g('lplan').textContent='Re-plan';
  if(!r.ok){g('lwarn').textContent=d.error||'Could not plan.';return}plan=d;g('lstat').textContent=`${s.split(/\s+/).length.toLocaleString()} words · ${d.parts.length} parts`;
- g('lsecs').innerHTML=d.parts.map((p,i)=>`<div class=sec><span>Part ${i+1}<br>${p.words}w</span><input data-i=${i} value="${esc((d.meta&&d.meta.sections[i])||'Part '+(i+1))}" title="${esc(p.start)}"></div>`).join('')+
+ g('lsecs').innerHTML=d.parts.map((p,i)=>`<div class=sec><span>Part ${i+1}<br>${p.words}w</span><input data-i=${i} value="${esc((d.meta&&d.meta.sections[i])||'Part '+(i+1))}" title="${esc(p.start)}"><select data-pm=${i}>${topts('')}</select></div>`).join('')+
  `<label>YouTube title</label><input id=lyt value="${esc(d.meta&&d.meta.title||g('lt').value)}"><label>Description</label><textarea id=lyd style="height:70px">${esc(d.meta&&d.meta.description||'')}</textarea>`;g('lgo').disabled=false};
-g('lgo').onclick=async()=>{g('lgo').disabled=true;const b={script:g('ls').value,title:g('lt').value,voice:g('lvoice').value,music:g('lmusic').value=='1',subtitles:g('lsubs').value=='1',font_size:+g('lfs').value,sub_pos:'bottom',aspect:'16:9',
- sections:[...document.querySelectorAll('#lsecs .sec input')].map(x=>x.value),yt_title:(g('lyt')||{}).value||'',yt_desc:(g('lyd')||{}).value||''};
- const r=await fetch('/api/long',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const d=await r.json();if(!r.ok){g('lwarn').textContent=d.error;g('lgo').disabled=false;return}refresh()};
+const v=id=>{const e=g(id);return e?(e.dataset.on!=null?e.dataset.on=='1':e.type=='range'||e.type=='number'?+e.value:e.value):undefined};
+g('lgo').onclick=async()=>{g('lgo').disabled=true;g('lgomsg').textContent='';const dm=g('lmusic').value;
+ const b={script:g('ls').value,title:g('lt').value,voice:g('lvoice').value,rate:+g('lrate').value,aspect:'16:9',visuals:g('visuals').value,
+  flow_image_model:g('fimg').value,flow_video_model:g('fvid').value,
+  music:dm!='none',music_track:dm=='none'?'':dm,music_vol:+g('lvol').value,music_fade_in:+g('lfin').value,music_fade_out:+g('lfout').value,duck:g('lduck').checked,
+  part_music:[...document.querySelectorAll('#lsecs select[data-pm]')].map(s=>s.value),
+  subtitles:g('lsubs').checked,sub_style:v('sub_style'),sub_pos:v('sub_pos')||'bottom',font_size:v('font_size'),sub_custom:v('sub_custom'),sub_font:v('sub_font'),sub_bold:v('sub_bold'),sub_italic:v('sub_italic'),
+  sub_color:v('sub_color'),sub_stroke:v('sub_stroke'),sub_stroke_w:v('sub_stroke_w'),sub_bg_on:v('sub_bg_on')=='1',sub_bg:v('sub_bg'),sub_mode:v('sub_mode'),sub_hl:v('sub_hl'),sub_upper:v('sub_upper')=='1',preset:window.ccPreset||'',
+  sections:[...document.querySelectorAll('#lsecs .sec input')].map(x=>x.value),yt_title:(g('lyt')||{}).value||'',yt_desc:(g('lyd')||{}).value||''};
+ Object.keys(b).forEach(k=>b[k]===undefined&&delete b[k]);if(window.ccExtra)Object.assign(b,window.ccExtra(b));
+ const r=await fetch('/api/long',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const d=await r.json();if(!r.ok){g('lgomsg').innerHTML=esc(d.error)+(d.account?' <a href="/account">Connect Flow →</a>':'');g('lgo').disabled=false;return}refresh()};
 const yt=y=>['title','description','chapters'].map(k=>`<div class=yt><div><span>${k[0].toUpperCase()+k.slice(1)}</span><button class=btn type=button onclick="navigator.clipboard.writeText(this.parentElement.nextElementSibling.value);this.textContent='Copied'">Copy</button></div><textarea readonly>${esc(y[k])}</textarea></div>`).join('');
 async function refresh(){const r=await fetch('/api/history');if(r.status==401){location.reload();return}const d=(await r.json()).filter(j=>j.kind=='long');if(!d.length)return;
  g('ljobs').innerHTML=d.map(j=>{const m=/Part (\d+) of (\d+)/.exec(j.part||''),n=m?+m[2]:0,c=m?+m[1]:0;
   const steps=n?'<div class=steps>'+Array.from({length:n},(_,i)=>`<i class="${i+1<c?'d':i+1==c&&j.status=='running'?'r':j.status=='done'?'d':''}"></i>`).join('')+'</div>':'';
   const body=j.status=='done'?`<video controls preload=metadata ${j.drive?`poster="/thumb/${j.id}"`:''} src="/video/${j.id}"></video><div style="margin-top:6px"><a class=btn href="/video/${j.id}?dl=1">Download</a></div>${j.yt?yt(j.yt):''}`
-  :j.status=='error'?`<div style="color:#ff8a8a">${esc(j.error)}</div>`:`<div style="font-size:13px;color:#e9e6ff">${esc(j.part||'Queued')}${j.status=='running'?` · part ${j.progress||0}%`:''}</div>${steps}<div class=pbar><div style="width:${n?Math.round(((c-1)+(j.progress||0)/100)/n*100):3}%"></div></div>`;
+  :j.status=='error'?`<div style="color:#ff8a8a">${esc(j.error)}</div>`:`<div style="font-size:13px;color:#e9e6ff">${esc(j.part||'Queued')}${j.stage?' · '+esc(j.stage):''}${j.status=='running'?` · part ${j.progress||0}%`:''}</div>${steps}<div class=pbar><div style="width:${n?Math.round(((c-1)+(j.progress||0)/100)/n*100):3}%"></div></div>`;
   return `<div class=job><b>${esc((j.yt&&j.yt.title)||j.title)}</b> <small style="color:#a8a3c7">· ${esc(j.voice)}${j.drive?' · ☁ Saved to Drive':''}</small>${body}</div>`}).join('')}
-document.querySelector('.cc-nav[href="/longform"]').classList.add('on');refresh();setInterval(refresh,8000);stat()})()</script></body></html>
+const nav=document.querySelector('.cc-nav[href="/longform"]');if(nav)nav.classList.add('on');music();refresh();setInterval(refresh,8000);stat()})()</script></body></html>

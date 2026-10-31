@@ -125,7 +125,8 @@ def drive(job, folder, cap, pace=(75, 120)):
             tmp = STATE / "tmp"; shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(parents=True)
             cmd += ["-o", str(out)] if not my else ["--out", str(tmp)]
         else:
-            dur = str(a.get("duration") or job.get("duration") or 8)
+            dur = int(a.get("duration") or job.get("duration") or 8)
+            dur = str(min(dur, 10 if "omni" in str(model).lower() else 8))  # Veo 3.1 tops out at 8 s, Omni Flash at 10 s
             dur = dur if dur in ("4", "6", "8", "10") else "8"
             cmd = [gflow, "video", "r2v" if my else "t2v", sc["prompt"], "--aspect", job["aspect"], "--duration", dur, "-o", str(out)]
             for r in my[:3]:
