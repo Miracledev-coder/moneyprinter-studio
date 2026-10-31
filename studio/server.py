@@ -1372,6 +1372,40 @@ def flow_costs(req: Request):
     return {**FLOW_COSTS, "balance": m.get("credits"), "balance_at": m.get("credits_at")}
 
 
+@app.get("/api/flow/status")
+def flow_status(req: Request):
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    m = _fmeta(u)
+    seen = _FLOW_SEEN.get(u) or m.get("seen") or 0
+    return {"connected": u in _keys(), "online": flow_online(u), "last_seen": seen or None,
+            "label": m.get("label", ""), "device": m.get("device", ""), "paired": m.get("paired")}
+
+
+@app.get("/api/flow/engine")
+def flow_engine_get(req: Request):
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    import aivisuals as aiv
+    return {"engine": _prefs(u).get("engine", "flow") if is_admin(u) else "flow", "online": flow_online(u), "connected": u in _keys(),
+            "free_models": is_admin(u), "ai_gate": ai_gate(u),
+            "models": aiv.MODELS, "video_model": _prefs(u).get("video_model", "lite"), "image_model": _prefs(u).get("image_model", "pro"),
+            "video_models": TIERS, "image_models": ITIERS}
+
+
+# Google Flow credits per generation, from Google's help page "Manage your Google Flow credits"
+# (support.google.com/flow/answer/16526234, read 2026-10-31). Images are not on Google's table; gflow-cli's docs
+# (E2E_TESTING.md, confirmed with its maintainer 2026-09-02) say image generation spends 0 credits and has a daily cap.
+FLOW_COSTS = {
+    "video": {"lite": {"std": 10, "ultra": 5}, "fast": {"std": 20, "ultra": 10}, "quality": {"std": 100, "ultra": 100},
+              "omni": {"by_sec": {"4": 7, "6": 10, "8": 12, "10": 15}}},
+    "image": {"pro": 0, "nb2": 0, "lite": 0},
+    "source": "https://support.google.com/flow/answer/16526234", "image_note": "0 credits (daily image quota, per gflow-cli docs; not on Google's table)",
+}
+
+
 @app.get("/api/flow/{fid}")
 def flow_status(fid: str, req: Request):
     if fid == "engine":  # route order: /api/flow/{fid} is registered first
@@ -1699,17 +1733,6 @@ async def flow_claim(req: Request):
     return {"key": key, "user": u}
 
 
-@app.get("/api/flow/status")
-def flow_status(req: Request):
-    u = current_user(req)
-    if not u:
-        return JSONResponse({"error": "not logged in"}, 401)
-    m = _fmeta(u)
-    seen = _FLOW_SEEN.get(u) or m.get("seen") or 0
-    return {"connected": u in _keys(), "online": flow_online(u), "last_seen": seen or None,
-            "label": m.get("label", ""), "device": m.get("device", ""), "paired": m.get("paired")}
-
-
 @app.delete("/api/flow/link")
 def flow_unlink(req: Request):
     """Unlink: the helper's key stops working at once; the user falls back to the free models."""
@@ -1719,29 +1742,6 @@ def flow_unlink(req: Request):
     k = _keys(); k.pop(u, None); _keys_save(k)
     _FLOW_SEEN.pop(u, None); _fmeta(u, _drop=True)
     return {"ok": True}
-
-
-@app.get("/api/flow/engine")
-def flow_engine_get(req: Request):
-    u = current_user(req)
-    if not u:
-        return JSONResponse({"error": "not logged in"}, 401)
-    import aivisuals as aiv
-    return {"engine": _prefs(u).get("engine", "flow") if is_admin(u) else "flow", "online": flow_online(u), "connected": u in _keys(),
-            "free_models": is_admin(u), "ai_gate": ai_gate(u),
-            "models": aiv.MODELS, "video_model": _prefs(u).get("video_model", "lite"), "image_model": _prefs(u).get("image_model", "pro"),
-            "video_models": TIERS, "image_models": ITIERS}
-
-
-# Google Flow credits per generation, from Google's help page "Manage your Google Flow credits"
-# (support.google.com/flow/answer/16526234, read 2026-10-31). Images are not on Google's table; gflow-cli's docs
-# (E2E_TESTING.md, confirmed with its maintainer 2026-09-02) say image generation spends 0 credits and has a daily cap.
-FLOW_COSTS = {
-    "video": {"lite": {"std": 10, "ultra": 5}, "fast": {"std": 20, "ultra": 10}, "quality": {"std": 100, "ultra": 100},
-              "omni": {"by_sec": {"4": 7, "6": 10, "8": 12, "10": 15}}},
-    "image": {"pro": 0, "nb2": 0, "lite": 0},
-    "source": "https://support.google.com/flow/answer/16526234", "image_note": "0 credits (daily image quota, per gflow-cli docs; not on Google's table)",
-}
 
 
 @app.post("/api/flow/engine")
