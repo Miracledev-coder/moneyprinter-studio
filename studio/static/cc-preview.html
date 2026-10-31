@@ -1,0 +1,41 @@
+<div class="cc-field" style="grid-column:1/-1"><label>Live subtitle preview</label>
+<link rel=stylesheet href="/fonts.css">
+<div class=sp-wrap><div id=sp-frame class=sp-frame><div id=sp-text class=sp-text></div></div>
+<div class=sp-side><p class=cc-sub style="font-size:12px;margin:0 0 8px">Updates as you change settings. The real render can differ slightly; check it with a real frame.</p>
+<button type=button id=sp-real class=sp-btn>Render real preview frame</button><div id=sp-msg class=cc-sub style="font-size:12px;margin-top:6px"></div><img id=sp-img class=sp-img alt="" hidden></div></div></div>
+<style>
+.sp-wrap{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+.sp-frame{position:relative;width:216px;height:384px;background:linear-gradient(160deg,#0b0a1a,#2a2550);border-radius:12px;overflow:hidden;border:1px solid #2a2550;flex:none}
+.sp-frame.wide{width:min(384px,100%);height:216px}
+.sp-text{position:absolute;left:8%;right:8%;text-align:center;line-height:1.15;word-wrap:break-word;paint-order:stroke fill}
+.sp-text span{display:inline-block;transition:transform .12s}
+.sp-side{flex:1;min-width:180px}.sp-btn{background:#a855f7;color:#fff;border:0;border-radius:10px;padding:10px 14px;font:inherit;cursor:pointer}
+.sp-btn:disabled{opacity:.6}.sp-img{display:block;max-width:216px;max-height:384px;margin-top:10px;border-radius:10px;border:1px solid #2a2550}
+</style>
+<script>(()=>{const g=i=>document.getElementById(i),FAM={{FONTFAM}},ST={{STYLES}};
+const SIZE={chunk:2,highlight:4,karaoke:5,boldpop:3};let tick=0;
+function S(){return{aspect:g('aspect').value,subtitles:true,sub_style:g('sub_style').value,sub_pos:g('sub_pos').value,font_size:+g('font_size').value,sub_custom:+g('sub_custom').value,sub_font:g('sub_font').value,sub_bold:g('sub_bold').dataset.on=='1',sub_italic:g('sub_italic').dataset.on=='1',sub_color:g('sub_color').value,sub_stroke:g('sub_stroke').value,sub_stroke_w:+g('sub_stroke_w').value,sub_bg_on:g('sub_bg_on').value=='1',sub_bg:g('sub_bg').value,sub_mode:g('sub_mode').value,preset:window.ccPreset||'',sub_hl:g('sub_hl').value,sub_upper:g('sub_upper').value=='1'}}
+function sample(){const t=((g('prompt')||{}).value||'').replace(/\s+/g,' ').trim();const w=t.split(' ').filter(Boolean).slice(0,8);return w.length>=2?w.join(' '):'This is how your subtitles will look'}
+function draw(){const s=S(),F=g('sp-frame'),T=g('sp-text'),wide=s.aspect=='16:9';F.classList.toggle('wide',wide);
+const H=F.clientHeight,k=H/(wide?1080:1920);let fg=s.sub_color,ol=s.sub_stroke,ow=s.sub_stroke_w,bg=s.sub_bg_on?s.sub_bg:null;
+if(s.sub_style!='custom'&&!s.preset){const p=ST[s.sub_style]||ST.classic;fg=p.text_fore_color;ol=p.stroke_color;ow=p.stroke_width;bg=p.text_background_color?'#000000':null}
+let words=sample().split(' ');if(s.sub_upper)words=words.map(w=>w.toUpperCase());
+const P=s.preset,wb=P||s.sub_mode=='word_by_word',size=P?(SIZE[P]||6):1;let i=tick%words.length,ch=words;
+if(wb){const st=Math.floor(i/size)*size;ch=words.slice(st,st+size);i-=st}
+T.style.fontFamily=`'S ${FAM[s.sub_font]||'Be Vietnam Pro'}',sans-serif`;T.style.fontWeight=s.sub_bold?700:400;T.style.fontStyle=s.sub_italic?'italic':'normal';
+T.style.fontSize=Math.max(6,s.font_size*k)+'px';T.style.color=fg;
+const o=Math.max(0,ow*1.5*k);T.style.webkitTextStroke=bg?'0':(o*2)+'px '+ol;
+T.style.background='none';T.style.textShadow=P=='neon'?`0 0 ${8*k*4}px ${s.sub_hl},0 0 ${4*k*4}px ${s.sub_hl}`:'none';
+T.style.top=T.style.bottom=T.style.transform='';const m=(P?0.12:0.08)*H;
+if(s.sub_pos=='top')T.style.top=m+'px';else if(s.sub_pos=='center'){T.style.top='50%';T.style.transform='translateY(-50%)'}else if(s.sub_pos=='custom'){T.style.top=s.sub_custom+'%';T.style.transform='translateY(-50%)'}else T.style.bottom=m+'px';
+T.innerHTML='';ch.forEach((w,j)=>{const e=document.createElement('span');e.textContent=w;
+if(bg){e.style.background=bg+'AA';e.style.padding='0 .2em';e.style.borderRadius='.15em'}
+if(P=='highlight'&&j==i){e.style.color=s.sub_hl;e.style.transform='scale(1.1)'}
+if(P=='karaoke'&&j<=i)e.style.color=s.sub_hl;
+if(P=='boldpop'&&j==0&&i%size==0)e.style.transform='scale(.85)';
+T.appendChild(e);T.appendChild(document.createTextNode(' '))});}
+setInterval(()=>{tick++},450);(function loop(){try{draw()}catch(e){}setTimeout(loop,120)})();
+g('sp-real').onclick=async()=>{const b=g('sp-real'),m=g('sp-msg'),im=g('sp-img');b.disabled=true;m.textContent='Rendering one real frame…';
+try{const r=await fetch('/api/preview-frame',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...S(),text:sample()})});
+if(!r.ok){m.textContent=((await r.json().catch(()=>({}))).error)||'Preview failed.';return}
+im.src=URL.createObjectURL(await r.blob());im.hidden=false;m.textContent='Real ffmpeg/libass frame (same engine as the final video).'}catch(e){m.textContent='Preview failed: '+e}finally{b.disabled=false}}})()</script>

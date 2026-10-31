@@ -1,3 +1,4 @@
+import re
 import itertools
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
@@ -1615,6 +1616,12 @@ def _ass_color(hex_color, alpha="00"):
     return f"&H{alpha}{b}{g}{r}".upper()
 
 
+def _ass_safe(txt):
+    """Neutralise ASS override/escape characters in user text ({, }, \\, newlines)."""
+    return (str(txt).replace("\\", "/").replace("{", "(").replace("}", ")")
+            .replace("\r", " ").replace("\n", " "))
+
+
 def _parse_srt_words(path):
     import re as _re
     def t(x):
@@ -1625,7 +1632,7 @@ def _parse_srt_words(path):
         lines = [l for l in block.strip().splitlines() if l.strip()]
         if len(lines) >= 3 and "-->" in lines[1]:
             a, b = [x.strip() for x in lines[1].split("-->")]
-            out.append((t(a), t(b), " ".join(lines[2:]).strip()))
+            out.append((t(a), t(b), _ass_safe(" ".join(lines[2:]).strip())))
     return out
 
 
@@ -1726,6 +1733,70 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return True
 
 
+def subtitle_filter(params, subtitle_path, width, height):
+    """libass filter string for the Studio subtitle look (shared by renders and previews)."""
+    font_file = os.path.join(utils.font_dir(), params.font_name or "")
+    font_family = os.path.splitext(os.path.basename(font_file))[0].replace("-", " ")
+    try:
+        from PIL import ImageFont
+        font_family = ImageFont.truetype(font_file, 10).getname()[0]
+    except Exception:
+        pass
+    font_family = re.sub(r"[^A-Za-z0-9 ._-]", "", font_family)[:60] or "Arial"
+    pos = params.subtitle_position or "bottom"
+    # SRT + force_style uses legacy SSA alignment numbers (2 bottom, 6 top, 10 middle)
+    align = {"top": 6, "center": 10, "custom": 10}.get(pos, 2)
+    # libass scales styles from PlayResY=288 by default; convert pixel size.
+    fs = max(8, round((params.font_size or 48) * 288 / height))
+    bg = params.text_background_color
+    boxed = (isinstance(bg, str) and bg != "") or bg is True
+    style = [f"FontName={font_family}", f"FontSize={fs}", f"PrimaryColour={_ass_color(params.text_fore_color)}",
+             f"OutlineColour={_ass_color(params.stroke_color)}", f"Alignment={align}",
+             f"MarginV={round(288 * 0.08)}", f"Bold={-1 if getattr(params, 'subtitle_bold', False) else 0}",
+             f"Italic={-1 if getattr(params, 'subtitle_italic', False) else 0}"]
+    if boxed:
+        style += ["BorderStyle=3", f"BackColour={_ass_color(bg if isinstance(bg, str) else '#000000AA')}",
+                  f"OutlineColour={_ass_color(bg if isinstance(bg, str) else '#000000AA')}", "Outline=6", "Shadow=0"]
+    else:
+        style += ["BorderStyle=1", f"Outline={max(0.0, (params.stroke_width or 0)) * 288 / height * 1.5:.2f}", "Shadow=0"]
+    fdir = utils.font_dir().replace(":", "\\:")
+    ass_file = os.path.splitext(subtitle_path)[0] + ".preset.ass"
+    if getattr(params, "subtitle_preset", "") and build_preset_ass(subtitle_path, ass_file, params, width, height, font_family):
+        sub = ass_file.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        return f"subtitles='{sub}':fontsdir='{fdir}'"
+    else:
+        sub = subtitle_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        return f"subtitles='{sub}':fontsdir='{fdir}':force_style='{','.join(style)}'"
+
+
+def render_preview_frame(params, text, width, height, out_png, at=None):
+    """One real libass frame of `text` on the brand dark background (no TTS, no footage)."""
+    import subprocess, tempfile
+    words = _ass_safe(text).split()[:8] or ["Preview"]
+    d = tempfile.mkdtemp(prefix="prev_")
+    srt = os.path.join(d, "s.srt")
+    per = 0.4
+    word_cues = bool(getattr(params, "subtitle_preset", "")) or params.subtitle_display_mode == "word_by_word"
+    with open(srt, "w", encoding="utf-8") as f:
+        if word_cues:
+            for n, w in enumerate(words):
+                a, b = n * per, (n + 1) * per
+                f.write(f"{n+1}\n{_ass_ts(a).replace('.', ',')}0 --> {_ass_ts(b).replace('.', ',')}0\n{w}\n\n")
+        else:
+            f.write(f"1\n0:00:00,000 --> 0:00:05,000\n{' '.join(words)}\n\n")
+    t = at if at is not None else (per * 1.5 if word_cues else 1.0)
+    vf = subtitle_filter(params, srt, width, height)
+    ffmpeg = utils.get_ffmpeg_binary() if hasattr(utils, "get_ffmpeg_binary") else "ffmpeg"
+    cmd = [ffmpeg, "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c=0x0b0a1a:s={width}x{height}:d=5",
+           "-vf", vf, "-ss", f"{t:.2f}", "-frames:v", "1", out_png]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=30)
+        return r.returncode == 0 and os.path.exists(out_png)
+    finally:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def _ffmpeg_final_render(video_path, audio_path, subtitle_path, output_file, params,
                          bgm_file_override, width, height) -> bool:
     """Low-memory final render: one ffmpeg process (libass subtitles + audio mix),
@@ -1743,36 +1814,7 @@ def _ffmpeg_final_render(video_path, audio_path, subtitle_path, output_file, par
         cmd += ["-stream_loop", "-1", "-i", bgm]
     vf = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
     if params.subtitle_enabled and subtitle_path and os.path.exists(subtitle_path):
-        font_file = os.path.join(utils.font_dir(), params.font_name or "")
-        font_family = os.path.splitext(os.path.basename(font_file))[0].replace("-", " ")
-        try:
-            from PIL import ImageFont
-            font_family = ImageFont.truetype(font_file, 10).getname()[0]
-        except Exception:
-            pass
-        pos = params.subtitle_position or "bottom"
-        align = {"top": 8, "center": 5}.get(pos, 2)
-        # libass scales styles from PlayResY=288 by default; convert pixel size.
-        fs = max(8, round((params.font_size or 48) * 288 / height))
-        bg = params.text_background_color
-        boxed = (isinstance(bg, str) and bg != "") or bg is True
-        style = [f"FontName={font_family}", f"FontSize={fs}", f"PrimaryColour={_ass_color(params.text_fore_color)}",
-                 f"OutlineColour={_ass_color(params.stroke_color)}", f"Alignment={align}",
-                 f"MarginV={round(288 * 0.08)}", f"Bold={-1 if getattr(params, 'subtitle_bold', False) else 0}",
-                 f"Italic={-1 if getattr(params, 'subtitle_italic', False) else 0}"]
-        if boxed:
-            style += ["BorderStyle=3", f"BackColour={_ass_color(bg if isinstance(bg, str) else '#000000AA')}",
-                      f"OutlineColour={_ass_color(bg if isinstance(bg, str) else '#000000AA')}", "Outline=6", "Shadow=0"]
-        else:
-            style += ["BorderStyle=1", f"Outline={max(0.0, (params.stroke_width or 0)) * 288 / height * 1.5:.2f}", "Shadow=0"]
-        fdir = utils.font_dir().replace(":", "\\:")
-        ass_file = os.path.splitext(subtitle_path)[0] + ".preset.ass"
-        if getattr(params, "subtitle_preset", "") and build_preset_ass(subtitle_path, ass_file, params, width, height, font_family):
-            sub = ass_file.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-            vf += f",subtitles='{sub}':fontsdir='{fdir}'"
-        else:
-            sub = subtitle_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-            vf += f",subtitles='{sub}':fontsdir='{fdir}':force_style='{','.join(style)}'"
+        vf += "," + subtitle_filter(params, subtitle_path, width, height)
     vol = params.voice_volume or 1.0
     if bgm:
         af = (f"[1:a]volume={vol}[v];[2:a]volume={params.bgm_volume or 0.2}[m];"

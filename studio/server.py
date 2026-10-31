@@ -50,6 +50,66 @@ def load_users():
 
 
 USERS = load_users()
+_SECRETS = [v for k in ("ELEVENLABS_API_KEY", "RENDER_API_KEY", "GEMINI_API_KEY", "PIXABAY_API_KEY", "HF_TOKEN",
+                        "SESSION_SECRET", "PEXELS_API_KEY") if len(v := os.environ.get(k, "")) >= 6]
+_SECRETS += [p for p in USERS.values()]
+
+
+def redact(x):
+    """Strip any secret value (API keys, passwords, key=... query params) from text shown to users or logs."""
+    x = str(x)
+    for v in _SECRETS:
+        x = x.replace(v, "***")
+    return re.sub(r"(?i)((?:api_?)?key=)[^&\s'\"]+", r"\1***", x)
+
+
+try:
+    from loguru import logger as _lg
+    _lg.configure(patcher=lambda r: r.update(message=redact(r["message"])))
+except Exception:
+    pass
+
+# Per-user daily caps (in memory; reset at UTC midnight or on restart). Protects the shared free API keys.
+CAPS = {"videos": int(os.environ.get("CAP_VIDEOS", 12)), "ai": int(os.environ.get("CAP_AI", 60)),
+        "eleven_chars": int(os.environ.get("CAP_ELEVEN_CHARS", 3000)), "previews": 200}
+_usage = {}
+
+
+def use(user, kind, n=1):
+    """Count n units of `kind` for today; return False (and count nothing) if it would pass the cap."""
+    k = (user, kind, time.strftime("%Y-%m-%d", time.gmtime()))
+    if _usage.get(k, 0) + n > CAPS[kind]:
+        return False
+    _usage[k] = _usage.get(k, 0) + n
+    return True
+
+
+def num(v, d, lo, hi, cast=float):
+    try:
+        return max(lo, min(cast(float(v)), hi))
+    except (TypeError, ValueError):
+        return d
+
+
+def clean_text(t, n):
+    """User text that becomes subtitles: drop ASS/libass override chars and control chars."""
+    t = str(t or "")[:n]
+    t = t.replace("{", "(").replace("}", ")").replace("\\", "/")
+    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", " ", t).strip()
+
+
+def clean_body(b, n=300):
+    """Cap every string in a JSON body (recursively) so prompts sent to Gemini stay small."""
+    if isinstance(b, dict):
+        return {str(k)[:40]: clean_body(v, n) for k, v in list(b.items())[:40]}
+    if isinstance(b, list):
+        return [clean_body(v, n) for v in b[:40]]
+    if isinstance(b, str):
+        return b[:n]
+    return b if isinstance(b, (int, float, bool)) or b is None else None
+
+
+_fails = {}
 SECRET = (os.environ.get("SESSION_SECRET") or secrets.token_hex(32)).encode()
 OUT_DIR = Path(os.environ.get("STUDIO_OUT", "/tmp/studio_out")); OUT_DIR.mkdir(parents=True, exist_ok=True)
 KEEP_VIDEOS = 10
@@ -134,7 +194,10 @@ def worker():
             shutil.move(vids[0], dest)
             j.update(status="done", video=str(dest), script=(res or {}).get("script", ""))
         except Exception as e:  # noqa: BLE001
-            j.update(status="error", error=str(e)[:300])
+            msg = redact(e)
+            if "quota" in msg.lower() or "429" in msg or "credits" in msg.lower():
+                msg = "A free API limit was reached (" + msg[:160] + "). Try again later or pick a free Edge voice."
+            j.update(status="error", error=msg[:300])
         finally:
             j["elapsed"] = round(time.time() - j["started"])
             shutil.rmtree(tdir, ignore_errors=True)
@@ -165,6 +228,7 @@ app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 PAGE = ((HERE / "index.html").read_text()
         .replace("{{SHELL}}", (HERE / "static/cc-shell.html").read_text())
         .replace("{{IDEAS}}", (HERE / "static/cc-ideas.html").read_text())
+        .replace("{{PREVIEW}}", (HERE / "static/cc-preview.html").read_text())
         .replace("{{HEADER}}", (HERE / "static/cc-header.html").read_text())
         .replace("{{APP}}", "MoneyPrinter Studio"))
 LOGIN = (Path(__file__).parent / "login.html").read_text()
@@ -186,15 +250,26 @@ def index(req: Request):
     if os.environ.get("ELEVENLABS_API_KEY"):
         opts += ('<optgroup label="ElevenLabs (free plan ~Eleven v4 · 10k credits/mo &#8776; 10 min audio; commercial use needs attribution)">'
                  + "".join(f'<option value="{v}">{k}</option>' for k, v in ELEVEN_VOICES.items()) + "</optgroup>")
-    return HTMLResponse(PAGE.replace("{{VOICES}}", opts).replace("{{USER}}", current_user(req)))
+    import json
+    fam = json.dumps({n: f[0] for n, f in FONT_META.items()})
+    sty = json.dumps({k: {x: y for x, y in v.items() if x in ("text_fore_color", "stroke_color", "stroke_width", "text_background_color")} for k, v in STYLES.items()})
+    return HTMLResponse(PAGE.replace("{{VOICES}}", opts).replace("{{USER}}", current_user(req))
+                        .replace("{{FONTFAM}}", fam).replace("{{STYLES}}", sty))
 
 
 @app.post("/login")
-def login(username: str = Form(...), password: str = Form(...)):
-    p = USERS.get(username.strip())
-    if not p or not hmac.compare_digest(p, password):
+def login(req: Request, username: str = Form(...), password: str = Form(...)):
+    ip = (req.headers.get("x-forwarded-for") or (req.client.host if req.client else "")).split(",")[0].strip()
+    now = time.time()
+    f = [t for t in _fails.get(ip, []) if now - t < 900]
+    if len(f) >= 8:
+        return HTMLResponse(LOGIN.replace("{{ERR}}", "Too many attempts. Wait 15 minutes."), 429)
+    p = USERS.get(username.strip()[:40])
+    if not p or not hmac.compare_digest(p.encode(), password[:200].encode()):
+        _fails[ip] = f + [now]
         time.sleep(1)
         return HTMLResponse(LOGIN.replace("{{ERR}}", "Wrong username or password."), 401)
+    _fails.pop(ip, None)
     r = RedirectResponse("/", 303)
     r.set_cookie("mps", sign(username.strip()), httponly=True, samesite="lax", max_age=7 * 86400,
                  secure=os.environ.get("RENDER") is not None)
@@ -215,16 +290,52 @@ async def generate(req: Request):
     user = current_user(req)
     if not user:
         return JSONResponse({"error": "not logged in"}, 401)
-    b = await req.json()
-    topic, script = (b.get("topic") or "").strip()[:300], (b.get("script") or "").strip()[:4000]
+    try:
+        b = await req.json()
+        assert isinstance(b, dict)
+    except Exception:
+        return JSONResponse({"error": "Bad request."}, 400)
+    topic, script = clean_text(b.get("topic"), 300), clean_text(b.get("script"), 4000)
     if not topic and not script:
         return JSONResponse({"error": "Enter a topic or a script."}, 400)
     if sum(1 for j in jobs.values() if j["status"] in ("queued", "running")) >= 5:
         return JSONResponse({"error": "Queue is full, try again in a few minutes."}, 429)
+    if sum(1 for j in jobs.values() if j["status"] in ("queued", "running") and j.get("user") == user) >= 2:
+        return JSONResponse({"error": "You already have 2 videos waiting. Let one finish first."}, 429)
+    voice = b.get("voice") if b.get("voice") in VOICES.values() else VOICES["Ezinne — Nigerian, female"]
+    secs = LENGTHS.get(str(b.get("length")), 15)
+    if voice.startswith("elevenlabs:"):
+        est = len(script) if script else round(secs * 2.1 * 6.5)
+        if est > 2500:
+            return JSONResponse({"error": "ElevenLabs scripts are capped at 2,500 characters per video to save credits. Shorten it or use a free Edge voice."}, 400)
+        if not use(user, "eleven_chars", est):
+            return JSONResponse({"error": f"Daily ElevenLabs limit reached ({CAPS['eleven_chars']} characters per user). Use a free Edge voice or try tomorrow."}, 429)
+    if not use(user, "videos"):
+        return JSONResponse({"error": f"Daily limit reached ({CAPS['videos']} videos per user). Try again tomorrow."}, 429)
+    sp = sub_params(b)
+    params = VideoParams(
+        video_subject=topic or script[:80], video_script=script,
+        video_terms=[clean_text(t, 40) for t in str(b.get("terms") or "")[:400].split(",") if t.strip()][:6] or None,
+        video_clip_duration=num(b.get("clip"), 4, 2, 10, int), video_count=1, video_source="pixabay",
+        video_language="en", voice_name=voice, voice_rate=num(b.get("rate"), 1.0, 0.8, 1.2),
+        bgm_type="random" if b.get("music", True) else "", bgm_volume=0.15,
+        n_threads=1, paragraph_number=1 if secs <= 30 else 2 if secs <= 60 else 3 if secs <= 90 else 4 if secs <= 120 else 6,
+        video_script_prompt=f"Write in English. Keep the whole script to {round(secs * 2.1 * 0.9)} to {round(secs * 2.1 * 1.1)} words in total (about {secs} seconds spoken).",
+        **sp)
+    jid = str(uuid.uuid4())
+    vlabel = next((k.split(" —")[0] for k, v in VOICES.items() if v == voice), "")
+    jobs[jid] = dict(status="queued", user=user, params=params, created=time.time(), title=(topic or script)[:90],
+                     aspect="16:9" if b.get("aspect") == "16:9" else "9:16", voice=vlabel)
+    jobq.put(jid)
+    return {"id": jid}
+
+
+def sub_params(b):
+    """Subtitle/look settings from a request body, all validated (shared by renders and previews)."""
     hexc = lambda v, d: v if isinstance(v, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", v) else d
     if b.get("sub_style") == "custom":
         style = dict(text_fore_color=hexc(b.get("sub_color"), "#FFFFFF"), stroke_color=hexc(b.get("sub_stroke"), "#000000"),
-                     stroke_width=max(0.0, min(float(b.get("sub_stroke_w") or 0), 8.0)),
+                     stroke_width=num(b.get("sub_stroke_w"), 1.5, 0.0, 8.0),
                      text_background_color=(hexc(b.get("sub_bg"), "#000000") + "AA") if b.get("sub_bg_on") else False,
                      rounded_subtitle_background=bool(b.get("sub_bg_on")))
     else:
@@ -238,29 +349,11 @@ async def generate(req: Request):
     extra = dict(subtitle_preset=preset, highlight_color=hexc(b.get("sub_hl"), "#A855F7"),
                  subtitle_uppercase=bool(b.get("sub_upper")),
                  subtitle_bold=bool(b.get("sub_bold")), subtitle_italic=bool(b.get("sub_italic")))
-    voice = b.get("voice") if b.get("voice") in VOICES.values() else VOICES["Ezinne — Nigerian, female"]
-    secs = LENGTHS.get(str(b.get("length")), 15)
-    length = 1 if secs <= 30 else 2 if secs <= 60 else 3 if secs <= 90 else 4 if secs <= 120 else 6
-    w = round(secs * 2.1)
-    words = f"{round(w * 0.9)} to {round(w * 1.1)} words in total (about {secs} seconds spoken)"
-    params = VideoParams(
-        video_subject=topic or script[:80], video_script=script,
-        video_terms=[t.strip()[:40] for t in str(b.get("terms") or "").split(",") if t.strip()][:6] or None,
-        video_aspect=VideoAspect.landscape if b.get("aspect") == "16:9" else VideoAspect.portrait,
-        video_clip_duration=max(2, min(int(b.get("clip") or 4), 10)), video_count=1, video_source="pixabay",
-        video_language="en", voice_name=voice, voice_rate=float(b.get("rate") or 1.0),
-        bgm_type="random" if b.get("music", True) else "", bgm_volume=0.15,
-        subtitle_enabled=bool(b.get("subtitles", True)), font_name=font,
-        font_size=max(16, min(int(b.get("font_size") or 48), 120)), subtitle_position=pos,
-        custom_position=max(0.0, min(float(b.get("sub_custom") or 70), 100.0)), subtitle_display_mode=mode,
-        n_threads=1, paragraph_number=length,
-        video_script_prompt=f"Write in English. Keep the whole script to {words}.", **style, **extra)
-    jid = str(uuid.uuid4())
-    vlabel = next((k.split(" —")[0] for k, v in VOICES.items() if v == voice), "")
-    jobs[jid] = dict(status="queued", user=user, params=params, created=time.time(), title=(topic or script)[:90],
-                     aspect="16:9" if b.get("aspect") == "16:9" else "9:16", voice=vlabel)
-    jobq.put(jid)
-    return {"id": jid}
+    return dict(video_aspect=VideoAspect.landscape if b.get("aspect") == "16:9" else VideoAspect.portrait,
+                subtitle_enabled=bool(b.get("subtitles", True)), font_name=font,
+                font_size=num(b.get("font_size"), 48, 16, 120, int), subtitle_position=pos,
+                custom_position=num(b.get("sub_custom"), 70.0, 0.0, 100.0), subtitle_display_mode=mode,
+                **style, **extra)
 
 
 sys.path.insert(0, str(HERE))
@@ -272,9 +365,13 @@ from starlette.concurrency import run_in_threadpool  # noqa: E402
 async def api_research(req: Request):
     if not current_user(req):
         return JSONResponse({"error": "not logged in"}, 401)
-    t = ((await req.json()).get("topic") or "").strip()
+    u = current_user(req)
+    t = clean_body(await req.json()).get("topic") or ""
+    t = t.strip()[:120]
     if not t:
         return JSONResponse({"error": "Enter a niche or topic."}, 400)
+    if not use(u, "ai"):
+        return JSONResponse({"error": f"Daily idea limit reached ({CAPS['ai']} requests). Try again tomorrow."}, 429)
     return {"sources": await run_in_threadpool(idealab.research, t)}
 
 
@@ -282,30 +379,37 @@ async def api_research(req: Request):
 async def api_ideas(req: Request):
     if not current_user(req):
         return JSONResponse({"error": "not logged in"}, 401)
-    b = await req.json()
-    if not (b.get("topic") or "").strip():
+    b = clean_body(await req.json())
+    if not isinstance(b, dict) or not str(b.get("topic") or "").strip():
         return JSONResponse({"error": "Enter a niche or topic."}, 400)
+    if not use(current_user(req), "ai"):
+        return JSONResponse({"error": f"Daily idea limit reached ({CAPS['ai']} requests). Try again tomorrow."}, 429)
     try:
         res = b.get("research") or await run_in_threadpool(idealab.research, b["topic"])
         return {"ideas": await run_in_threadpool(idealab.ideas, b, res)}
     except Exception as e:
-        return JSONResponse({"error": "Idea generation failed: " + str(e)[:120]}, 502)
+        return JSONResponse({"error": "Idea generation failed: " + redact(e)[:120]}, 502)
 
 
 @app.post("/api/script")
 async def api_script(req: Request):
     if not current_user(req):
         return JSONResponse({"error": "not logged in"}, 401)
+    b = clean_body(await req.json())
+    if not isinstance(b, dict):
+        return JSONResponse({"error": "Bad request."}, 400)
+    if not use(current_user(req), "ai"):
+        return JSONResponse({"error": f"Daily idea limit reached ({CAPS['ai']} requests). Try again tomorrow."}, 429)
     try:
-        return await run_in_threadpool(idealab.script, await req.json())
+        return await run_in_threadpool(idealab.script, b)
     except Exception as e:
-        return JSONResponse({"error": "Script writing failed: " + str(e)[:120]}, 502)
+        return JSONResponse({"error": "Script writing failed: " + redact(e)[:120]}, 502)
 
 
 @app.get("/api/status/{jid}")
 def status(jid: str, req: Request):
     j = jobs.get(jid)
-    if not current_user(req) or not j:
+    if not j or current_user(req) != j.get("user"):
         return JSONResponse({"error": "not found"}, 404)
     out = {k: j.get(k) for k in ("status", "error", "elapsed", "script")}
     if j["status"] == "queued":
@@ -341,6 +445,100 @@ def video(jid: str, req: Request, dl: int = 0):
     return FileResponse(j["video"], media_type="video/mp4",
                         filename=f"moneyprinter-{jid[:8]}.mp4" if dl else None)
 
+
+FONT_DIR = ROOT / "resource" / "fonts"
+
+
+def _font_meta():
+    from PIL import ImageFont
+    out = {}
+    for n in sorted(FONTS):
+        try:
+            fam, sub = ImageFont.truetype(str(FONT_DIR / n), 10).getname()
+        except Exception:
+            continue
+        out[n] = (fam, sub or "")
+    return out
+
+
+FONT_META = _font_meta()
+FONT_CSS = "".join(
+    f"@font-face{{font-family:'S {fam}';src:url('/fonts/{n}');font-weight:{700 if 'Bold' in sub else 400};"
+    f"font-style:{'italic' if 'Italic' in sub else 'normal'};font-display:swap}}"
+    for n, (fam, sub) in FONT_META.items() if n.endswith(".ttf"))
+
+
+@app.get("/fonts.css")
+def fonts_css(req: Request):
+    if not current_user(req):
+        return JSONResponse({"error": "not logged in"}, 401)
+    from fastapi.responses import Response
+    return Response(FONT_CSS, media_type="text/css", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/fonts/{name}")
+def font_file(name: str, req: Request):
+    if not current_user(req) or name not in FONTS or not name.endswith(".ttf"):
+        return JSONResponse({"error": "not found"}, 404)
+    return FileResponse(FONT_DIR / name, media_type="font/ttf", headers={"Cache-Control": "private, max-age=86400"})
+
+
+_prev_lock = threading.Lock()
+
+
+@app.post("/api/preview-frame")
+async def preview_frame(req: Request):
+    """Render ONE real subtitle frame with ffmpeg/libass on a dark background. No TTS, no footage, no credits."""
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    try:
+        b = clean_body(await req.json(), 400)
+        assert isinstance(b, dict)
+    except Exception:
+        return JSONResponse({"error": "Bad request."}, 400)
+    if not use(u, "previews"):
+        return JSONResponse({"error": "Daily preview limit reached."}, 429)
+    if any(j["status"] == "running" for j in jobs.values()) and os.environ.get("RENDER"):
+        return JSONResponse({"error": "A video is rendering right now (512MB server). Try the preview again when it finishes; the live box above is exact enough meanwhile."}, 409)
+    if not _prev_lock.acquire(blocking=False):
+        return JSONResponse({"error": "A preview is already rendering."}, 429)
+    try:
+        from app.services import video as vs
+        sp = sub_params(b)
+        sp["subtitle_enabled"] = True
+        params = VideoParams(video_subject="preview", **sp)
+        text = clean_text(b.get("text"), 200) or "This is how your subtitles will look"
+        if params.subtitle_uppercase:
+            text = text.upper()
+        w, h = (960, 540) if b.get("aspect") == "16:9" else (540, 960)
+        # the real render is 1080 wide/high; scale font so proportions match
+        params.font_size = max(8, round(params.font_size / 2))
+        params.stroke_width = (params.stroke_width or 0) / 2
+        import tempfile
+        out = os.path.join(tempfile.gettempdir(), f"prev_{uuid.uuid4().hex}.png")
+        ok = await run_in_threadpool(vs.render_preview_frame, params, text, w, h, out, num(b.get("at"), None, 0, 4) if b.get("at") is not None else None)
+        if not ok:
+            return JSONResponse({"error": "Preview render failed."}, 500)
+        data = Path(out).read_bytes(); Path(out).unlink(missing_ok=True)
+        from fastapi.responses import Response
+        return Response(data, media_type="image/png", headers={"Cache-Control": "no-store"})
+    finally:
+        _prev_lock.release()
+
+
+@app.middleware("http")
+async def security_headers(req: Request, call_next):
+    r = await call_next(req)
+    r.headers["X-Content-Type-Options"] = "nosniff"
+    r.headers["X-Frame-Options"] = "DENY"
+    r.headers["Referrer-Policy"] = "same-origin"
+    return r
+
+
+# leftovers from a crash or restart mid-render
+shutil.rmtree(ROOT / "storage" / "tasks", ignore_errors=True)
+shutil.rmtree(ROOT / "storage" / "cache_videos", ignore_errors=True)
 
 if __name__ == "__main__":
     import uvicorn
