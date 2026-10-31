@@ -8,7 +8,7 @@
 .sp-frame{position:relative;width:216px;height:384px;background:linear-gradient(160deg,#0b0a1a,#2a2550);border-radius:12px;overflow:hidden;border:1px solid #2a2550;flex:none}
 .sp-frame.wide{width:min(384px,100%);height:216px}
 .sp-text{position:absolute;left:8%;right:8%;text-align:center;line-height:1.15;word-wrap:break-word;paint-order:stroke fill}
-.sp-text span{display:inline-block;transition:transform .12s}
+.sp-text span{display:inline-block;margin:0 .14em;transition:transform .12s}
 .sp-side{flex:1;min-width:180px}.sp-btn{background:#a855f7;color:#fff;border:0;border-radius:10px;padding:10px 14px;font:inherit;cursor:pointer}
 .sp-btn:disabled{opacity:.6}.sp-img{display:block;max-width:216px;max-height:384px;margin-top:10px;border-radius:10px;border:1px solid #2a2550}
 </style>
@@ -23,7 +23,7 @@ let words=sample().split(' ');if(s.sub_upper)words=words.map(w=>w.toUpperCase())
 const P=s.preset,wb=P||s.sub_mode=='word_by_word',size=P?(SIZE[P]||6):1;let i=tick%words.length,ch=words;
 if(wb){const st=Math.floor(i/size)*size;ch=words.slice(st,st+size);i-=st}
 T.style.fontFamily=`'S ${FAM[s.sub_font]||'Be Vietnam Pro'}',sans-serif`;T.style.fontWeight=s.sub_bold?700:400;T.style.fontStyle=s.sub_italic?'italic':'normal';
-T.style.fontSize=Math.max(6,s.font_size*k)+'px';T.style.color=fg;
+T.style.fontSize=Math.max(5,s.font_size*k*0.68)+'px';T.style.color=fg;
 const o=Math.max(0,ow*1.5*k);T.style.webkitTextStroke=bg?'0':(o*2)+'px '+ol;
 T.style.background='none';T.style.textShadow=P=='neon'?`0 0 ${8*k*4}px ${s.sub_hl},0 0 ${4*k*4}px ${s.sub_hl}`:'none';
 T.style.top=T.style.bottom=T.style.transform='';const m=(P?0.12:0.08)*H;
