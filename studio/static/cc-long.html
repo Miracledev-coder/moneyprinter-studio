@@ -1,0 +1,15 @@
+<div id=lp style="display:none;max-width:860px;margin:12px auto 0;background:#13112a;border:1px solid #2b2750;border-radius:14px;padding:14px;text-align:left;font-size:13px">
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>Long Script Mode</b><input id=lp_title placeholder="Video title (e.g. The History of Lagos)" style="flex:1;min-width:200px;background:#0b0a1a;color:#fff;border:1px solid #39345f;border-radius:8px;padding:7px 9px"></div>
+<p style="color:#9c97c0;margin:8px 0">Paste 1,500–3,000+ words. It's split at paragraph/sentence breaks into ~2.5-min parts, rendered one after another in the background (16:9 · 1280×720, same voice, subtitles and music, no repeated clips), then joined into one video with YouTube chapters. Each part also appears in My videos. Safe to close the tab — it resumes after a restart.</p>
+<div id=lp_info style="color:#e9e6ff"></div><div id=lp_warn style="color:#ffb74d;margin-top:6px"></div></div>
+<script>(()=>{const g=i=>document.getElementById(i);let t;
+const info=async()=>{const s=g('prompt').value.trim(),w=s?s.split(/\s+/).length:0,el=(g('voice').value||'').startsWith('elevenlabs:');
+ const mins=w/150,parts=Math.max(1,Math.ceil(w/380));g('lp_info').textContent=w?`${w.toLocaleString()} words · ≈${mins.toFixed(1)} min of video · ${parts} part${parts>1?'s':''}`:'';
+ g('lp_warn').innerHTML=(w?`⏱ Render time estimate: about ${Math.round(parts*8)}–${Math.round(parts*25)} min in total on the free server (it keeps going if you close the tab).`:'')+(el?`<br>⚠️ ElevenLabs: this uses ~${s.length.toLocaleString()} credits (free plan ≈10k/month). Pick a free Edge voice for long-form.`:'');
+ if(w>=150){clearTimeout(t);t=setTimeout(async()=>{const r=await fetch('/api/long',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({script:s,dry:1})});if(r.ok){const d=await r.json();g('lp_info').textContent=`${w.toLocaleString()} words · ≈${d.minutes} min · ${d.parts.length} parts (${d.parts.map(p=>p.words).join(' / ')} words)`;
+  g('lp_warn').innerHTML=g('lp_warn').innerHTML.replace(/about \d+–\d+/,`about ${d.parts.length*8}–${d.parts.length*25}`)}},600)}};
+['input','change'].forEach(e=>{g('prompt').addEventListener(e,()=>window.ccMode=='long'&&info());g('voice').addEventListener(e,()=>window.ccMode=='long'&&info())});
+window.ccLongShow=on=>{g('lp').style.display=on?'block':'none';document.querySelector('.sc-tools').style.display=on?'none':'flex';if(on){g('sc_hookp').style.display='none';g('sc_scp').style.display='none'}g('length').closest('label').style.display=on?'none':'';g('eta').style.display=on?'none':'';if(on){g('aspect').value='16:9';g('sub_pos').value='bottom';g('font_size').value=40;g('prompt').style.minHeight='260px';info()}};
+window.ccLongGo=async b=>{b.script=g('prompt').value;b.title=g('lp_title').value;b.aspect='16:9';
+ const r=await fetch('/api/long',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});return r};
+})()</script>

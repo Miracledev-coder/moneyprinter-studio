@@ -1,0 +1,54 @@
+<style>
+.sc-tools{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin:12px 0 0}
+.sc-tools button,.sc-row button,.sc-hook .op button{background:#1c1936;color:#e9e6ff;border:1px solid #39345f;border-radius:10px;padding:7px 12px;font-size:13px;cursor:pointer}
+.sc-tools button:hover,.sc-row button:hover,.sc-hook .op button:hover{border-color:#a855f7}
+.sc-panel{margin:12px auto 0;max-width:860px;background:#13112a;border:1px solid #2b2750;border-radius:14px;padding:14px;display:none;text-align:left}
+.sc-hook .score{font-size:28px;font-weight:800;color:#a855f7}.sc-hook .op{display:flex;gap:8px;align-items:center;margin:6px 0}
+.sc-hook .op span{flex:1;font-size:14px}
+.sc-list{display:flex;flex-direction:column;gap:10px}
+.sc-row{display:grid;grid-template-columns:28px 132px 1fr;gap:10px;align-items:start;border-bottom:1px solid #26224a;padding-bottom:10px}
+.sc-row .n{font-weight:700;color:#a855f7;padding-top:4px}
+.sc-row .th{width:132px;height:84px;border-radius:8px;background:#000 center/cover;position:relative;overflow:hidden}
+.sc-row .th small{position:absolute;bottom:2px;left:4px;font-size:10px;background:#000a;padding:1px 4px;border-radius:4px}
+.sc-row .tx{font-size:13px;color:#cfcae8;margin-bottom:6px}.sc-row .ctl{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.sc-row input[type=text]{background:#0b0a1a;color:#fff;border:1px solid #39345f;border-radius:8px;padding:6px 8px;font-size:13px;width:150px}
+.sc-row .ord button{padding:2px 7px;margin-top:4px}
+.sc-strip{display:flex;gap:4px;margin-top:6px;overflow-x:auto}.sc-strip img{width:54px;height:34px;object-fit:cover;border-radius:4px;cursor:pointer;opacity:.6;border:2px solid transparent}
+.sc-strip img.on{opacity:1;border-color:#a855f7}
+</style>
+<div class=sc-tools><button type=button id=sc_hook>🎣 Check my hook</button><button type=button id=sc_plan>🎬 Match footage per sentence</button></div>
+<div class="sc-panel sc-hook" id=sc_hookp></div>
+<div class=sc-panel id=sc_scp><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>Scene editor</b><span style="font-size:12px;color:#9c97c0">Swap, re-search, upload your own clip/image (images get a Ken Burns zoom), or reorder. These clips are used in this order.</span><button type=button id=sc_off style="background:none;border:0;color:#9c97c0;cursor:pointer">✕ Don't use</button></div><div class=sc-list id=sc_list></div>
+<div style="margin-top:10px;display:flex;gap:8px"><button type=button id=sc_add style="background:#1c1936;color:#e9e6ff;border:1px solid #39345f;border-radius:10px;padding:7px 12px">＋ Add my own clip/image as a scene</button></div></div>
+<input type=file id=sc_file accept="video/mp4,video/quicktime,video/webm,image/jpeg,image/png,image/webp" hidden style="display:none!important">
+<script>(()=>{const g=i=>document.getElementById(i),E=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let S=null,upAt=null;const curMode=()=>document.querySelector('#mode .on').dataset.v;
+const need=()=>{if(curMode()!='script'||g('prompt').value.trim().split(/\s+/).length<5){g('msg').textContent='Switch to "My script" and paste or generate a script first.';return false}g('msg').textContent='';return true};
+const post=async(u,b)=>{const r=await fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const d=await r.json();if(!r.ok)throw new Error(d.error||'Failed');return d};
+g('sc_hook').onclick=async()=>{if(!need())return;const p=g('sc_hookp');p.style.display='block';p.innerHTML='Scoring your opening line…';
+ try{const d=await post('/api/hook',{script:g('prompt').value});
+ p.innerHTML=`<div style="display:flex;gap:14px;align-items:center"><div class=score>${d.score}/10</div><div><div style="font-size:13px;color:#9c97c0">Your opener: “${E(d.first)}”</div><div style="font-size:13px">${E(d.why)}</div></div></div><div style="margin-top:8px;font-size:13px;color:#9c97c0">Try one of these:</div>`+d.openers.map((o,i)=>`<div class=op><span>${E(o)}</span><button type=button data-i=${i}>Use this</button></div>`).join('');
+ p.querySelectorAll('button[data-i]').forEach(b=>b.onclick=()=>{const t=g('prompt').value;const i=t.indexOf(d.first.slice(0,40));const o=d.openers[+b.dataset.i];
+  g('prompt').value=i>=0?t.slice(0,i)+o+t.slice(i+d.first.length):o+' '+t;b.textContent='✓ Applied';S&&(S[0]&&(S[0].text=o))})}catch(e){p.textContent=e.message}};
+function opt(s){return s.pick>=0&&s.options[s.pick]}
+function draw(){const L=g('sc_list');L.innerHTML=S.map((s,i)=>{const o=opt(s);const th=s.up?`/uploads/${s.up.id}.thumb.jpg`:(o?o.thumb:'');
+ return `<div class=sc-row data-i=${i}><div><div class=n>${i+1}</div><div class=ord><button type=button data-a=up title="Move up">↑</button><button type=button data-a=dn title="Move down">↓</button><button type=button data-a=del title="Remove">✕</button></div></div>
+ <div class=th style="background-image:url('${E(th)}')">${s.up?`<small>${s.up.kind=='image'?'Your image · Ken Burns':'Your clip'}</small>`:(o?'':'<small>No match</small>')}</div>
+ <div><div class=tx>${E(s.text)||'<i>(extra scene)</i>'}</div><div class=ctl><input type=text value="${E(s.q)}" data-a=q><button type=button data-a=rs>🔍 Re-search</button><button type=button data-a=sw>⟳ Swap</button><button type=button data-a=upl>⬆ Upload</button></div>
+ ${s.up?'':`<div class=sc-strip>${s.options.map((x,k)=>`<img src="${E(x.thumb)}" data-k=${k} class="${k==s.pick?'on':''}">`).join('')}</div>`}</div></div>`}).join('');
+ L.querySelectorAll('.sc-row').forEach(r=>{const i=+r.dataset.i,s=S[i];r.querySelectorAll('button').forEach(b=>b.onclick=async()=>{const a=b.dataset.a;
+  if(a=='up'&&i>0){[S[i-1],S[i]]=[S[i],S[i-1]];draw()}if(a=='dn'&&i<S.length-1){[S[i+1],S[i]]=[S[i],S[i+1]];draw()}if(a=='del'){S.splice(i,1);draw()}
+  if(a=='sw'){s.up=null;if(s.options.length)s.pick=(s.pick+1)%s.options.length;draw()}
+  if(a=='upl'){upAt=i;g('sc_file').click()}
+  if(a=='rs'){s.q=r.querySelector('input').value;b.textContent='…';try{const d=await post('/api/scenes',{q:s.q,aspect:g('aspect').value});s.options=d.options;s.pick=d.options.length?0:-1;s.up=null}catch(e){g('msg').textContent=e.message}draw()}});
+  r.querySelector('input').oninput=e=>s.q=e.target.value;r.querySelectorAll('.sc-strip img').forEach(im=>im.onclick=()=>{s.pick=+im.dataset.k;draw()})})}
+g('sc_file').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;g('msg').textContent='Uploading '+f.name+'…';const fd=new FormData();fd.append('file',f);
+ const r=await fetch('/api/upload',{method:'POST',body:fd});const d=await r.json();if(!r.ok){g('msg').textContent=d.error||'Upload failed';return}g('msg').textContent='';
+ if(upAt==null){S=S||[];S.push({text:'',q:'',options:[],pick:-1,up:d});g('sc_scp').style.display='block'}else S[upAt].up=d;draw()};
+g('sc_add').onclick=()=>{upAt=null;g('sc_file').click()};
+g('sc_off').onclick=()=>{S=null;g('sc_scp').style.display='none'};
+g('sc_plan').onclick=async()=>{if(!need())return;const p=g('sc_scp'),L=g('sc_list');p.style.display='block';L.innerHTML='Splitting into scenes and finding matching footage…';
+ try{S=(await post('/api/scenes',{script:g('prompt').value,aspect:g('aspect').value})).scenes;draw()}catch(e){L.textContent=e.message}};
+window.ccExtra=b=>{if(!S||!S.length||curMode()!='script')return{};const sc=S.map(s=>({src:s.up?'upload:'+s.up.id:(opt(s)?opt(s).url:'')})).filter(x=>x.src);return sc.length?{scenes:sc}:{}};
+window.ccScenesReset=()=>{S=null;g('sc_scp').style.display='none';g('sc_hookp').style.display='none'};
+})()</script>
