@@ -83,19 +83,32 @@ def _reddit_json(q):
     return out
 
 
+STOP = {"for", "the", "and", "with", "how", "to", "of", "in", "on", "a", "an", "ads", "brands", "brand", "tips", "best"}
+
+
 def wikipedia(topic):
-    q = urllib.parse.quote(topic)
-    d = json.loads(_get(f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={q}&srlimit=3&format=json"))
-    out = []
-    for s in d.get("query", {}).get("search", []):
-        title = s["title"]
-        try:
-            sm = json.loads(_get("https://en.wikipedia.org/api/rest_v1/page/summary/" + urllib.parse.quote(title.replace(" ", "_")), 5))
-            ext = (sm.get("extract") or "")[:300]
-        except Exception:
-            ext = re.sub("<[^>]+>", "", s.get("snippet", ""))
-        out.append({"title": title, "link": "https://en.wikipedia.org/wiki/" + urllib.parse.quote(title.replace(" ", "_")), "meta": ext})
-    return out
+    words = [w for w in re.findall(r"[A-Za-z0-9]+", topic) if w.lower() not in STOP and len(w) > 1]
+    syn = {"ugc": "user-generated content", "ai": "artificial intelligence", "seo": "search engine optimization"}
+    words = [syn.get(w.lower(), w) for w in words]
+    queries = [" ".join(words)] + [" ".join(words[i:i + 2]) for i in range(len(words) - 1)] + words
+    seen, out = set(), []
+    for qq in queries[:7]:
+        d = json.loads(_get("https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=3&format=json&srsearch="
+                            + urllib.parse.quote(qq), 5))
+        for s in d.get("query", {}).get("search", []):
+            title = s["title"]
+            if title in seen or not any(re.search(r"\b" + re.escape(w) + r"\b", title, re.I) for w in words):
+                continue
+            seen.add(title)
+            try:
+                sm = json.loads(_get("https://en.wikipedia.org/api/rest_v1/page/summary/" + urllib.parse.quote(title.replace(" ", "_")), 5))
+                ext = (sm.get("extract") or "")[:300]
+            except Exception:
+                ext = re.sub("<[^>]+>", "", s.get("snippet", ""))
+            out.append({"title": title, "link": "https://en.wikipedia.org/wiki/" + urllib.parse.quote(title.replace(" ", "_")), "meta": ext})
+        if len(out) >= 3:
+            break
+    return out[:3]
 
 
 SOURCES = {"Google Trends (daily, NG + US)": trends, "Google News": news, "Reddit": reddit, "Wikipedia": wikipedia}
