@@ -48,11 +48,31 @@ async function fload(){const d=await (await fetch('/api/flow/status')).json(),f=
  if(d.connected){p.className='pill '+(d.online?'ok':'mid');p.textContent=d.online?'Connected · helper online':'Connected · helper offline';
   g('fdesc').innerHTML=`Flow account: <b>${esc(d.label)||'(not named)'}</b>${d.device?' on <b>'+esc(d.device)+'</b>':''}. Last seen: <b>${ago(d.last_seen)}</b>.`+(d.online?'':' Start the helper on your computer to make AI scenes.');
   g('facts').innerHTML='<button class="btn ghost" id=fre>Pair a different computer</button> <button class="btn danger" id=fun>Unlink</button>';
-  g('fun').onclick=async()=>{if(!confirm('Unlink Google Flow? The helper stops working and AI visuals turn off until you pair again.'))return;await fetch('/api/flow/link',{method:'DELETE'});g('fcode').innerHTML='';fload()};g('fre').onclick=pairNow}
+  g('fun').onclick=async()=>{if(!confirm('Unlink Google Flow? The helper stops working and AI visuals turn off until you pair again.'))return;await fetch('/api/flow/link',{method:'DELETE'});g('fcode').innerHTML='';fload()};g('fre').onclick=oneClick}
  else{p.className='pill warn';p.textContent='Not connected';g('fdesc').textContent='Connect your own Google Flow to use AI visuals (Nano Banana Pro images, Veo clips).';
-  g('facts').innerHTML='<button class=btn id=fpair>Connect my Google Flow</button>';g('fpair').onclick=pairNow}}
+  g('facts').innerHTML='';oneClick()}}
+const STEPS=[['Download','Click the button. You get “Connect Flow.zip” (works once, for 30 minutes).'],
+ ['Double-click','Open your Downloads, double-click the zip, then double-click “Connect Flow”. It installs everything it needs the first time (about 2 minutes).'],
+ ['Sign in to Flow','Chrome opens Google Flow: sign in with your Google account and close the window when you see your projects.']];
+function oneClick(){
+ g('fcode').innerHTML=`<div class=card style="margin-top:12px" id=oc>
+ <a class=btn id=fdl href="/api/flow/helper.zip" download>⬇️ Download Flow Helper for Mac</a>
+ <ol id=ocs style="list-style:none;padding:0;margin:14px 0 6px">${STEPS.map((x,i)=>`<li data-i=${i} style="display:flex;gap:10px;align-items:flex-start;margin:8px 0"><span class=ocd style="flex:none;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:#2a2550;font-weight:700">${i+1}</span><span><b>${x[0]}</b> <span class=ocst style="font-size:12px;color:#a6a1c0"></span><br><span class=fine>${x[1]}</span></span></li>`).join('')}</ol>
+ <details class=fine style="margin-top:8px"><summary>Mac says “cannot be opened because it is from an unidentified developer”?</summary>
+ <p>That is normal for small apps that are not in the App Store. <b>Right-click</b> (or Control-click) “Connect Flow” → <b>Open</b> → <b>Open</b>. On newer macOS: open <b>System Settings → Privacy &amp; Security</b>, scroll down and click <b>Open Anyway</b>, then double-click the file again. You only need to do this once.</p></details>
+ <p class=fine style="margin-top:6px">Windows: not available yet; use a Mac, or the Advanced route below on a Mac/Linux terminal.</p>
+ <details class=fine style="margin-top:8px"><summary>Advanced: pair with a code in Terminal</summary><p><button class="btn ghost" id=fpair>Get a pairing code</button></p><div id=fadv></div></details></div>`;
+ g('fpair').onclick=pairNow;g('fdl').addEventListener('click',()=>{setTimeout(ocPoll,1500)});ocPoll()}
+let ocT=0;
+async function ocPoll(){clearTimeout(ocT);if(!g('ocs'))return;let d;try{d=await (await fetch('/api/flow/status')).json()}catch(e){ocT=setTimeout(ocPoll,5000);return}
+ const st=d.stage||'',on=d.online,lv=on?3:(d.connected||st==='pairing')?2.5:st==='signin'?2:(st==='installing'||st==='started')?1.5:st==='downloaded'?1:0;
+ const lab=[lv>=1?'✓ downloaded':'waiting',lv>=3?'✓ done':lv>=1.5?(st==='installing'?'installing… (about 2 min)':'✓ running'):lv>=1?'waiting for you to double-click…':'',
+  lv>=3?'✓ online':lv>=2.5?'connecting…':lv>=2?'waiting for you to sign in to Flow in Chrome…':''];
+ document.querySelectorAll('#ocs li').forEach((li,i)=>{const done=lv>=i+1.9||(i==0&&lv>=1);li.querySelector('.ocd').style.background=done?'#2e7d4f':'#2a2550';li.querySelector('.ocd').textContent=done?'✓':i+1;li.querySelector('.ocst').textContent=lab[i]});
+ if(on){g('fcode').innerHTML='<p>✅ Your Google Flow is connected and the helper is online.</p>';fload();return}
+ ocT=setTimeout(ocPoll,4000)}
 async function pairNow(){const r=await fetch('/api/flow/pair',{method:'POST'}),d=await r.json();if(!r.ok){alert(d.error||'Failed');return}
- g('fcode').innerHTML=`<div class=card style="margin-top:12px"><p>Your one-time code (expires in 10 min, shown only now):</p><p style="font:700 28px monospace;letter-spacing:4px">${esc(d.code)}</p>
+ (g('fadv')||g('fcode')).innerHTML=`<div class=card style="margin-top:12px"><p>Your one-time code (expires in 10 min, shown only now):</p><p style="font:700 28px monospace;letter-spacing:4px">${esc(d.code)}</p>
  <ol class=fine><li>Sign in to <b>your</b> Google account at labs.google/flow in Chrome.</li><li>Install the helper once (Terminal): <code>${esc(d.install)}</code></li>
  <li>Run: <code>${esc(d.run)} --account "you@gmail.com"</code> and type the code.</li><li>Keep that window open. This page will show “helper online”.</li></ol></div>`;
  const t0=Date.now(),w=setInterval(async()=>{const s=await (await fetch('/api/flow/status')).json();if(s.online||Date.now()-t0>600000){clearInterval(w);fload();if(s.online)g('fcode').innerHTML='<p>✅ Paired.</p>'}},5000)}

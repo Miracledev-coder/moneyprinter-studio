@@ -316,6 +316,7 @@ def main():
     ap.add_argument("--signin", action="store_true", help="one-time: open Chrome to sign in to Google Flow (your own account)")
     ap.add_argument("--pair", nargs="?", const="ask", metavar="CODE", help="pair with the code from Studio → Account → Connect my Google Flow")
     ap.add_argument("--account", default="", help="label for the Google account signed into Flow (shown on your Account page)")
+    ap.add_argument("--pair-only", action="store_true", help="pair, save the key, and exit (used by the one-click file)")
     ap.add_argument("--cap", type=int, default=50, help="daily cap for --drive (default 50, same as the Studio limit)")
     a = ap.parse_args()
     if a.manual:
@@ -335,6 +336,8 @@ def main():
         if a.pair:
             code = a.pair if a.pair != "ask" else input("Pairing code from your Account page (e.g. ABCD-2345): ").strip()
             key = pair(a.connect, code, LABEL)
+            if a.pair_only:
+                return
         else:
             key = a.token or (KEYF.read_text().strip() if KEYF.exists() else "") or getpass.getpass("Paste your bridge key from Studio (hidden), or re-run with --pair: ").strip()
         return connect(a.connect, key, folder, a.drive, a.cap)

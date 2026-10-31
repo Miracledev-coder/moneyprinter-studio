@@ -26,7 +26,7 @@ write_config()
 
 from fastapi import FastAPI, Form, Request  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse  # noqa: E402
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response  # noqa: E402
 from app.models import const  # noqa: E402
 from app.models.schema import VideoParams, VideoAspect, MaterialInfo  # noqa: E402
 from app.services import state as sm, task as tm, bgm as bgm_service  # noqa: E402
@@ -1380,7 +1380,8 @@ def flow_status(req: Request):
     m = _fmeta(u)
     seen = _FLOW_SEEN.get(u) or m.get("seen") or 0
     return {"connected": u in _keys(), "online": flow_online(u), "last_seen": seen or None,
-            "label": m.get("label", ""), "device": m.get("device", ""), "paired": m.get("paired")}
+            "label": m.get("label", ""), "device": m.get("device", ""), "paired": m.get("paired"),
+            "stage": (_PSTAGE.get(u) or ("", 0))[0] if time.time() - (_PSTAGE.get(u) or ("", 0))[1] < 1800 else ""}
 
 
 @app.get("/api/flow/engine")
@@ -1404,6 +1405,32 @@ FLOW_COSTS = {
     "image": {"pro": 0, "nb2": 0, "lite": 0},
     "source": "https://support.google.com/flow/answer/16526234", "image_note": "0 credits (daily image quota, per gflow-cli docs; not on Google's table)",
 }
+
+
+@app.get("/api/flow/helper.zip")
+def flow_helper_zip(req: Request):
+    """'Download Flow Helper for Mac': a zip holding 'Connect Flow.command' with this server's URL and a
+    single-use pairing token (30 min, bound to this user) baked in. Same claim route as the typed code."""
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    now = time.time()
+    for h in [h for h, (_, e) in _PAIRS.items() if e < now]:
+        _PAIRS.pop(h, None)
+    tok = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(24))
+    _PAIRS[hashlib.sha256(tok.encode()).hexdigest()] = (u, now + 1800)
+    _PSTAGE[u] = ("downloaded", now)
+    base = str(req.base_url).rstrip("/").replace("http://moneyprinter", "https://moneyprinter")
+    tpl = (Path(__file__).resolve().parent.parent / "tools" / "flow-bridge" / "connect_template.command").read_text()
+    body = tpl.replace("__STUDIO__", base).replace("__TOKEN__", tok)
+    import io, zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        zi = zipfile.ZipInfo("Connect Flow.command", time.localtime(now)[:6])
+        zi.external_attr = (0o100755 << 16); zi.create_system = 3  # keeps the executable bit when Finder unzips it
+        z.writestr(zi, body)
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="Connect Flow.zip"', "Cache-Control": "no-store"})
 
 
 @app.get("/api/flow/{fid}")
@@ -1710,6 +1737,23 @@ def flow_pair(req: Request):
     return {"code": code[:4] + "-" + code[4:], "expires_in": 600,
             "install": "curl -fsSL https://raw.githubusercontent.com/Miracledev-coder/moneyprinter-studio/main/tools/flow-bridge/install.sh | sh",
             "run": f"flow-bridge --connect {base} --pair"}
+
+
+_PSTAGE = {}  # user -> (stage, time) reported by the one-click file before it pairs
+
+
+@app.post("/api/flow/progress")
+async def flow_progress(req: Request):
+    """The one-click file reports how far it got (installing / signin / pairing). Token is checked, not used up."""
+    b = clean_body(await req.json(), 40)
+    tok = re.sub(r"[^A-Z0-9]", "", str(b.get("token", "")).upper())
+    hit = _PAIRS.get(hashlib.sha256(tok.encode()).hexdigest())
+    if not hit or hit[1] < time.time():
+        return JSONResponse({"error": "expired"}, 403)
+    st = str(b.get("stage", ""))
+    if st in ("started", "installing", "signin", "pairing"):
+        _PSTAGE[hit[0]] = (st, time.time())
+    return {"ok": True}
 
 
 @app.post("/api/flow/claim")
