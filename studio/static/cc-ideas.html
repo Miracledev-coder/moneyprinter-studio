@@ -1,0 +1,43 @@
+<section id=ideas class=cc-ideas hidden>
+<h1 class=cc-h1>Find your next winning video</h1><p class=cc-sub>Live signals from Google Trends, Google News, Reddit and Wikipedia, turned into scroll-stopping angles.</p>
+<div class=cc-prompt><textarea id=i_topic placeholder="Niche or topic, e.g. AI UGC ads for beauty brands"></textarea>
+<div class=ci-chips id=i_chips><button>AI tools</button><button>beauty</button><button>Nollywood drama</button><button>faith</button><button>finance</button><button>motivation</button><button>food / Lagos</button></div></div>
+<div class=ci-row>
+<label>Goal<select id=i_goal><option>grow followers</option><option>sell product</option><option>educate</option><option>entertain</option></select></label>
+<label>Platform<select id=i_plat><option>YouTube Shorts</option><option>Instagram Reels</option><option>TikTok-style</option></select></label>
+<label>Audience<input id=i_aud placeholder="e.g. Nigerian women 20-35"></label>
+<label>Tone<input id=i_tone placeholder="e.g. warm, witty"></label>
+<label>Ideas<select id=i_n><option>5</option><option selected>6</option><option>7</option><option>8</option><option>10</option></select></label>
+<button class=cc-btn id=i_go>Research &amp; ideas</button></div>
+<p class=cc-sub id=i_msg></p>
+<details class=ci-res id=i_res hidden><summary>Research <span id=i_rsum></span></summary><div id=i_rbody></div></details>
+<div class=ci-grid id=i_list></div>
+<div class=ci-script id=i_script hidden></div>
+</section>
+<script>
+(()=>{const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let ST={research:null,ideas:[],pick:-1,script:null};const LK='mps_ideas_{{USER}}';
+const save=()=>{try{localStorage.setItem(LK,JSON.stringify({...ST,form:{t:$('i_topic').value,g:$('i_goal').value,p:$('i_plat').value,a:$('i_aud').value,o:$('i_tone').value,n:$('i_n').value}}))}catch(e){}};
+const post=async(u,b)=>{const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});const j=await r.json().catch(()=>({error:'Server error'}));if(!r.ok)throw new Error(j.error||r.status);return j};
+const form=()=>({topic:$('i_topic').value.trim(),goal:$('i_goal').value,platform:$('i_plat').value,audience:$('i_aud').value,tone:$('i_tone').value,count:+$('i_n').value,length:($('length')||{}).value||'short'});
+$('i_chips').querySelectorAll('button').forEach(b=>b.onclick=()=>{const t=$('i_topic');t.value=t.value.trim()?t.value.trim()+', '+b.textContent:b.textContent});
+function drawRes(){const s=ST.research;if(!s)return;$('i_res').hidden=false;const ok=s.filter(x=>x.ok).length;$('i_rsum').textContent=`· ${ok}/${s.length} sources`;
+$('i_rbody').innerHTML=s.map(x=>`<div class=ci-src><b>${esc(x.name)}</b> <span class=${x.ok?'ci-ok':'ci-bad'}>${x.ok?x.items.length+' signals':'unavailable'}</span><ul>${x.items.slice(0,5).map(i=>`<li><a href="${esc(i.link)}" target=_blank rel=noopener>${esc(i.title)}</a> <span>${esc((i.meta||'').slice(0,90))}</span></li>`).join('')}</ul></div>`).join('')}
+function drawIdeas(){$('i_list').innerHTML=ST.ideas.map((d,k)=>`<div class="ci-card${k==ST.pick?' on':''}" data-k=${k}><div class=ci-top><span class=ci-type>${esc(d.hook_type)}</span><span class=ci-score>${d.score}/10</span></div><h3>${esc(d.title)}</h3><p class=ci-hook>“${esc(d.hook)}”</p><p class=ci-why>${esc(d.why)}</p><p class=ci-kw>${(d.keywords||[]).map(esc).join(' · ')}</p><button class=cc-btn data-w=${k}>Write script</button></div>`).join('');
+$('i_list').querySelectorAll('[data-w]').forEach(b=>b.onclick=()=>write(+b.dataset.w))}
+function drawScript(){const s=ST.script,el=$('i_script');if(!s){el.hidden=true;return}el.hidden=false;
+el.innerHTML=`<h3>Script · ~${s.seconds}s</h3><p><b>Hook</b> ${esc(s.hook)}</p><p><b>Tension</b> ${esc(s.tension)}</p><p><b>Payoff</b> ${esc(s.payoff)}</p><p><b>CTA</b> ${esc(s.cta)}</p><p class=ci-cap><b>Caption</b> ${esc(s.caption)}<br>${(s.hashtags||[]).map(esc).join(' ')}</p><button class=cc-btn id=i_use>Use this</button>`;$('i_use').onclick=use}
+async function go(){const f=form();if(!f.topic){$('i_msg').textContent='Enter a niche or topic first.';return}$('i_go').disabled=true;ST.script=null;drawScript();
+try{$('i_msg').textContent='Reading live signals…';ST.research=(await post('/api/research',{topic:f.topic})).sources;drawRes();
+$('i_msg').textContent='Writing angles with Gemini…';ST.ideas=(await post('/api/ideas',{...f,research:ST.research})).ideas;ST.pick=-1;drawIdeas();$('i_msg').textContent='Pick an idea and write its script.';save()}
+catch(e){$('i_msg').textContent=e.message}finally{$('i_go').disabled=false}}
+async function write(k){ST.pick=k;drawIdeas();$('i_msg').textContent='Writing script…';try{ST.script=await post('/api/script',{...form(),idea:ST.ideas[k]});drawScript();$('i_msg').textContent='';save();$('i_script').scrollIntoView({behavior:'smooth'})}catch(e){$('i_msg').textContent=e.message}}
+function use(){const s=ST.script,d=ST.ideas[ST.pick]||{};const sb=document.querySelector('#mode button[data-v=script]');if(sb)sb.click();$('prompt').value=s.full;
+$('terms').value=[...new Set([...(d.keywords||[]),...(s.keywords||[])])].slice(0,6).join(', ');location.hash='#create'}
+$('i_go').onclick=go;
+document.addEventListener('DOMContentLoaded',()=>{const p=document.querySelector('#create .cc-prompt');if(p&&!$('terms')){const w=document.createElement('label');w.className='ci-terms';w.innerHTML='Footage keywords <input id=terms placeholder="optional, comma separated, e.g. skincare, smartphone filming">';p.after(w)}
+try{const o=JSON.parse(localStorage.getItem(LK)||'null');if(o){ST={research:o.research,ideas:o.ideas||[],pick:o.pick??-1,script:o.script};const f=o.form||{};$('i_topic').value=f.t||'';if(f.g)$('i_goal').value=f.g;if(f.p)$('i_plat').value=f.p;$('i_aud').value=f.a||'';$('i_tone').value=f.o||'';if(f.n)$('i_n').value=f.n;drawRes();drawIdeas();drawScript()}}catch(e){}
+const view=()=>{const ide=location.hash=='#ideas';document.querySelectorAll('#create>*').forEach(e=>{if(e.id=='ideas')e.hidden=!ide;else if(e.tagName!='SCRIPT')e.style.display=ide?'none':''});
+document.querySelectorAll('.cc-nav').forEach(a=>a.classList.toggle('on',a.getAttribute('href')==(location.hash||'#create')||(!ide&&a.getAttribute('href')=='#create'&&location.hash!='#gallery')));if(!ide)window.scrollTo(0,location.hash=='#gallery'?$('gallery').offsetTop:0)};
+addEventListener('hashchange',view);view()})})();
+</script>

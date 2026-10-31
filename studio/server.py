@@ -162,6 +162,7 @@ HERE = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 PAGE = ((HERE / "index.html").read_text()
         .replace("{{SHELL}}", (HERE / "static/cc-shell.html").read_text())
+        .replace("{{IDEAS}}", (HERE / "static/cc-ideas.html").read_text())
         .replace("{{HEADER}}", (HERE / "static/cc-header.html").read_text())
         .replace("{{APP}}", "MoneyPrinter Studio"))
 LOGIN = (Path(__file__).parent / "login.html").read_text()
@@ -235,6 +236,7 @@ async def generate(req: Request):
     words = {1: "35 to 45 words (about 15 seconds spoken)", 2: "90 to 110 words", 3: "170 to 200 words"}[length]
     params = VideoParams(
         video_subject=topic or script[:80], video_script=script,
+        video_terms=[t.strip()[:40] for t in str(b.get("terms") or "").split(",") if t.strip()][:6] or None,
         video_aspect=VideoAspect.landscape if b.get("aspect") == "16:9" else VideoAspect.portrait,
         video_clip_duration=max(2, min(int(b.get("clip") or 4), 8)), video_count=1, video_source="pixabay",
         video_language="en", voice_name=voice, voice_rate=float(b.get("rate") or 1.0),
@@ -250,6 +252,45 @@ async def generate(req: Request):
                      aspect="16:9" if b.get("aspect") == "16:9" else "9:16", voice=vlabel)
     jobq.put(jid)
     return {"id": jid}
+
+
+sys.path.insert(0, str(HERE))
+import ideas as idealab  # noqa: E402
+from starlette.concurrency import run_in_threadpool  # noqa: E402
+
+
+@app.post("/api/research")
+async def api_research(req: Request):
+    if not current_user(req):
+        return JSONResponse({"error": "not logged in"}, 401)
+    t = ((await req.json()).get("topic") or "").strip()
+    if not t:
+        return JSONResponse({"error": "Enter a niche or topic."}, 400)
+    return {"sources": await run_in_threadpool(idealab.research, t)}
+
+
+@app.post("/api/ideas")
+async def api_ideas(req: Request):
+    if not current_user(req):
+        return JSONResponse({"error": "not logged in"}, 401)
+    b = await req.json()
+    if not (b.get("topic") or "").strip():
+        return JSONResponse({"error": "Enter a niche or topic."}, 400)
+    try:
+        res = b.get("research") or await run_in_threadpool(idealab.research, b["topic"])
+        return {"ideas": await run_in_threadpool(idealab.ideas, b, res)}
+    except Exception as e:
+        return JSONResponse({"error": "Idea generation failed: " + str(e)[:120]}, 502)
+
+
+@app.post("/api/script")
+async def api_script(req: Request):
+    if not current_user(req):
+        return JSONResponse({"error": "not logged in"}, 401)
+    try:
+        return await run_in_threadpool(idealab.script, await req.json())
+    except Exception as e:
+        return JSONResponse({"error": "Script writing failed: " + str(e)[:120]}, 502)
 
 
 @app.get("/api/status/{jid}")

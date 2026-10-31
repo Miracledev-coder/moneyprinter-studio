@@ -2,6 +2,7 @@
 <link rel=icon href="/static/favicon.svg"><link rel=apple-touch-icon href="/static/icon-192.png"><meta name=theme-color content="#0b0a1a"><link rel=stylesheet href="/static/cc-theme.css"></head><body>
 <div class=cc-shell>{{SHELL}}<div>{{HEADER}}
 <main class=cc-main id=create>
+{{IDEAS}}
 <h1 class=cc-h1>What video should we make?</h1><p class=cc-sub>Describe a topic, or paste your own script. We write, voice, and edit it with stock footage.</p>
 <div style="text-align:center"><div class=cc-tabs id=mode><button class=on data-v=topic>Topic</button><button data-v=script>My script</button></div></div>
 <div class=cc-prompt>
@@ -51,7 +52,7 @@ let last='';async function refresh(){const r=await fetch('/api/history');if(r.st
  const key=JSON.stringify(d);if(key!=last){last=key;$('grid').innerHTML=html}
  const busy=d.some(j=>j.status=='queued'||j.status=='running');setTimeout(refresh,busy?3000:20000)}
 $('go').onclick=async()=>{const t=$('prompt').value.trim();$('msg').textContent='';if(!t){$('msg').textContent='Describe a topic or paste a script first.';return}
- const b={topic:mode=='topic'?t:'',script:mode=='script'?t:'',aspect:$('aspect').value,length:$('length').value,voice:$('voice').value,subtitles:$('subs').dataset.on=='1',music:$('music').dataset.on=='1',sub_style:$('sub_style').value,sub_pos:$('sub_pos').value,clip:+$('clip').value,rate:+$('rate').value,font_size:+$('font_size').value,sub_custom:+$('sub_custom').value,sub_font:$('sub_font').value,sub_color:$('sub_color').value,sub_stroke:$('sub_stroke').value,sub_stroke_w:+$('sub_stroke_w').value,sub_bg_on:$('sub_bg_on').value=='1',sub_bg:$('sub_bg').value,sub_mode:$('sub_mode').value,preset:window.ccPreset||'',sub_hl:$('sub_hl').value,sub_upper:$('sub_upper').value=='1'};
+ const b={terms:($('terms')||{}).value||'',topic:mode=='topic'?t:'',script:mode=='script'?t:'',aspect:$('aspect').value,length:$('length').value,voice:$('voice').value,subtitles:$('subs').dataset.on=='1',music:$('music').dataset.on=='1',sub_style:$('sub_style').value,sub_pos:$('sub_pos').value,clip:+$('clip').value,rate:+$('rate').value,font_size:+$('font_size').value,sub_custom:+$('sub_custom').value,sub_font:$('sub_font').value,sub_color:$('sub_color').value,sub_stroke:$('sub_stroke').value,sub_stroke_w:+$('sub_stroke_w').value,sub_bg_on:$('sub_bg_on').value=='1',sub_bg:$('sub_bg').value,sub_mode:$('sub_mode').value,preset:window.ccPreset||'',sub_hl:$('sub_hl').value,sub_upper:$('sub_upper').value=='1'};
  $('go').disabled=true;const r=await fetch('/api/generate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const d=await r.json();$('go').disabled=false;
  if(!r.ok){$('msg').textContent=d.error||'Something went wrong.';return}$('prompt').value='';last='';refresh();$('gallery').scrollIntoView({behavior:'smooth'})};
 refresh();
