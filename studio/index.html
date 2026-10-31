@@ -34,7 +34,7 @@
 <div class=cc-err id=msg style="text-align:center;margin-top:12px;font-size:14px"></div>
 <p class=cc-sub id=eta style="color:var(--dim);margin:8px 0 0"></p>
 <script>(()=>{const e=()=>{const L=+document.getElementById('length').value||15,c=Math.max(2,Math.min(10,+document.getElementById('clip').value||4)),el=(document.getElementById('voice').value||'').startsWith('eleven');
-const m=Math.round(Math.max(1.5,1+L*0.06+(L/c)*0.12+(el?0.3:0))*2)/2;document.getElementById('eta').textContent=`Estimated render: about ${m}–${Math.ceil(m*1.6)} min for a ${L>=120?L/60+' min':L+'s'} video (~${Math.ceil(L/c)} clips). Longer videos take longer; you can leave this page.`};
+const m=Math.round(Math.max(1.5,1+L*0.03+(L/c)*0.05+(el?0.3:0))*2)/2;document.getElementById('eta').textContent=`Estimated render: about ${m}–${Math.ceil(m*1.6)} min for a ${L>=120?L/60+' min':L+'s'} video (~${Math.ceil(L/c)} clips). Longer videos take longer; you can leave this page.`};
 ['length','clip','voice'].forEach(i=>document.getElementById(i).addEventListener('input',e));e()})()</script>
 <div class=cc-sec id=gallery><h2>My videos</h2><span>One video renders at a time · typical 1–4 min</span></div>
 <div class=cc-gallery id=grid></div>
