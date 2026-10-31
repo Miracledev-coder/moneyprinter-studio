@@ -540,6 +540,8 @@ def direct(jid, topic, script, secs, voice, rate, aspect, workdir, log=print, pr
             try:
                 fl = flow(lines, aip, aimeta) or {}
             except Exception as e:
+                if getattr(e, "fatal", False):  # e.g. Flow not signed in for too long: fail with the clear message
+                    raise
                 log(f"director: Flow bridge failed {type(e).__name__}")
             if len(fl) < len(lines):
                 log(f"director: Using backup {'images' if free_ai else 'stock footage'} for {len(lines) - len(fl)} scene(s) (Flow not available)")

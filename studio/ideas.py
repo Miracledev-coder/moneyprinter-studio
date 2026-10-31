@@ -178,22 +178,68 @@ Vary hook types. Sort by score descending."""
     return out
 
 
+WPS = 2.5  # ~150 spoken words per minute
+SHORT_MAX, LONG_MAX = 180, 1200
+
+
+def target_seconds(b):
+    """Script length from the idea generator: seconds (int/str like '45', '90s', '3m', '8 min'); Shorts max 3 min."""
+    fmt = "long" if b.get("format") == "long" else "short"
+    v = str(b.get("length") or "").strip().lower()
+    secs = {"short": 15, "medium": 40, "long": 75}.get(v)
+    if secs is None:
+        m = re.match(r"^(\d+(?:\.\d+)?)\s*(s|sec|secs|seconds|m|min|mins|minutes)?$", v)
+        secs = (float(m.group(1)) * (60 if (m.group(2) or "").startswith("m") else 1)) if m else (480 if fmt == "long" else 40)
+    lo, hi = (60, LONG_MAX) if fmt == "long" else (10, SHORT_MAX)
+    return fmt, int(max(lo, min(secs, hi)))
+
+
+def _wc(t):
+    return len(re.findall(r"[A-Za-z0-9'’-]+", t or ""))
+
+
 def script(b):
-    try:
-        secs = max(10, min(int(b.get("length")), 180))
-    except (TypeError, ValueError):
-        secs = {"short": 15, "medium": 40, "long": 75}.get(b.get("length"), 15)
-    words = int(secs * 2.1)
+    fmt, secs = target_seconds(b)
+    words = int(round(secs * WPS))
+    ask = int(words * (1.0 if secs < 45 else 1.2 if secs <= 180 else 1.3))  # drafts run ~20-30% short; aim higher
+    paras = max(2, round(ask * 0.8 / 110))
     i = b.get("idea") or {}
-    p = f"""Write a short-form video voice-over script for this idea.
-Title: {i.get('title')}\nHook: {i.get('hook')} ({i.get('hook_type')})\nWhy: {i.get('why')}
+    base = f"""Title: {i.get('title')}\nHook: {i.get('hook')} ({i.get('hook_type')})\nWhy: {i.get('why')}
 Goal: {b.get('goal')}. Platform: {b.get('platform')}. Audience: {b.get('audience') or 'general'}. Tone: {b.get('tone') or 'confident, friendly'}.
-Target duration {secs} seconds = about {words} spoken words TOTAL. Structure: hook (<=2 seconds, start with the hook line), tension/value, payoff, CTA. For longer videos put most words in tension/value and payoff (several beats).
-Plain spoken English, no emojis, no stage directions, no hashtags inside the script.
+Plain spoken English, no emojis, no stage directions, no headings, no hashtags inside the script."""
+    if fmt == "long":
+        p = f"""Write a long-form YouTube voice-over script for this idea.
+{base}
+WORD BUDGET: the spoken script (hook + body + cta) must be {ask} words (±10%); write the body as {paras} paragraphs of ~110 words each, i.e. {secs // 60} min {secs % 60} s at 150 words per minute.
+Structure: hook (2-3 sentences), then a body of several sections as paragraphs separated by blank lines (each section opens with a smooth spoken transition), then a short CTA.
+Return JSON: {{"hook":str,"tension":str (the body, paragraphs separated by \\n\\n),"payoff":"","cta":str,"caption":str (1-2 lines),"hashtags":[3-5 strings starting with #],"keywords":[3-5 stock footage search terms]}}"""
+    else:
+        p = f"""Write a short-form video voice-over script for this idea.
+{base}
+WORD BUDGET: target {secs} seconds = {ask} spoken words TOTAL across hook+tension+payoff+cta (±10%; count them). Section budgets: hook ~{max(6, ask * 8 // 100)} words (start with the hook line), tension ~{ask * 50 // 100} words ({max(1, paras - 1)} short paragraphs) (several concrete beats/examples), payoff ~{ask * 30 // 100} words, cta ~{max(6, ask * 12 // 100)} words. Writers usually come in short: hit the budget.
 Return JSON: {{"hook":str,"tension":str,"payoff":str,"cta":str,"caption":str (1-2 lines for the post),"hashtags":[3-5 strings starting with #],"keywords":[3-5 stock footage search terms]}}"""
-    d = _gemini(p)
+    to = 150 if fmt == "long" else 60
+    d = _gemini(p, timeout=to)
     if isinstance(d, list): d = d[0] if d else {}
-    d["full"] = " ".join(str(d.get(k, "")).strip() for k in ("hook", "tension", "payoff", "cta")).strip()
+    full = lambda x: " ".join(str(x.get(k, "")).strip() for k in ("hook", "tension", "payoff", "cta") if str(x.get(k, "")).strip())
+    first = _wc(full(d)); d["retried"] = False
+    if abs(first - words) > 0.15 * words:  # off by more than 15%: one more pass to expand or trim
+        how = "EXPAND" if first < words else "TRIM"
+        p2 = p + f"""
+
+Your previous draft had {first} words but the budget is {words}. {how} it to {words} words (±10%), keeping the same hook, facts and structure.{" Add new concrete details, examples and beats (aim for " + str(int(min(1.7 * words, words * words / max(first, 1) * 1.05))) + " words; drafts usually come in short)." if how == "EXPAND" else ""}
+Previous draft JSON: {json.dumps({k: d.get(k, "") for k in ("hook", "tension", "payoff", "cta")})}"""
+        try:
+            d2 = _gemini(p2, timeout=to)
+            if isinstance(d2, list): d2 = d2[0] if d2 else {}
+            if abs(_wc(full(d2)) - words) < abs(first - words):
+                for k in ("caption", "hashtags", "keywords"):
+                    d2.setdefault(k, d.get(k))
+                d = d2
+            d["retried"] = True
+        except Exception:
+            d["retried"] = True
+    d["full"] = full(d) if fmt == "short" else "\n\n".join(str(d.get(k, "")).strip() for k in ("hook", "tension", "cta") if str(d.get(k, "")).strip())
     d["hashtags"] = [h if str(h).startswith("#") else "#" + str(h) for h in (d.get("hashtags") or [])][:5]
-    d["seconds"] = secs
+    d.update(seconds=secs, format=fmt, words=_wc(d["full"]), target_words=words, first_words=first)
     return d

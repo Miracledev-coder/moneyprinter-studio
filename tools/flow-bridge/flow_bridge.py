@@ -115,14 +115,42 @@ def job_open(jid):
         return True
 
 
-def drive(job, folder, cap, pace=(75, 120)):
+STATUS = {"state": "idle", "msg": ""}
+TASK_TIMEOUT = int(os.environ.get("FLOW_TASK_TIMEOUT", 600))  # hard limit per Flow generation
+
+
+def hstat(state, msg):
+    """What the helper is doing right now; sent with every heartbeat so Studio's progress panel can show it."""
+    STATUS.update(state=state, msg=msg[:200], at=int(time.time()))
+
+
+def _run(cmd, folder):
+    try:
+        return subprocess.run(cmd, cwd=folder, timeout=TASK_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        print(f"[auto] Flow did not finish this generation within {TASK_TIMEOUT // 60} min; giving up on it (it stays open for a manual upload).", flush=True)
+        hstat("error", f"A Flow generation timed out after {TASK_TIMEOUT // 60} min")
+        return subprocess.CompletedProcess(cmd, 124)
+
+
+def drive(job, folder, cap, pace=None):
     """Route A/B: gflow-cli drives labs.google/flow in a real, headed Chrome with your own signed-in profile.
     One scene at a time, 75-120 s apart, daily cap. Each file is saved as NN_scene.ext so it lands in the right scene."""
+    pace = pace or tuple(int(x) for x in (os.environ.get("FLOW_PACE") or "75,120").split(",")[:2])
     gflow = gflow_bin()
     if not gflow:
         print("[auto] gflow-cli is not installed; using the manual route (VEO Automation / drag-and-drop)."); return False
-    if subprocess.run([gflow, "auth", "status"], capture_output=True).returncode:
-        print("[auto] Flow is not signed in on this computer. Run:  flow-bridge --signin   (once), then start again."); return False
+    told = False
+    while subprocess.run([gflow, "auth", "status"], capture_output=True).returncode:  # wait (no restart needed) until Flow is signed in
+        hstat("signin", "Flow isn't signed in on your Mac. Run: flow-bridge --signin")
+        if not told:
+            print("[auto] Flow is not signed in on this computer. Run:  flow-bridge --signin   in another Terminal window."
+                  " This helper keeps the job and continues by itself once you are signed in.", flush=True); told = True
+        if not job_open(job["job"]):
+            print(f"[auto] Job {job['job'][:8]} was stopped or timed out in Studio."); job["stopped"] = True; hstat("idle", ""); return True
+        time.sleep(20)
+    if told:
+        print("[auto] Flow is signed in now; continuing the job.", flush=True)
     STATE.mkdir(exist_ok=True)
     cf = STATE / f"count-{time.strftime('%Y-%m-%d')}.txt"
     used = int(cf.read_text() or 0) if cf.exists() else 0
@@ -158,18 +186,19 @@ def drive(job, folder, cap, pace=(75, 120)):
             cmd += ["-i", job["agent_brief"][:600]]
         if alias:
             cmd += ["--model", alias]
+        hstat("working", f"Generating scene {sc['n']}/{len(job['scenes'])}: {kind} · {model or 'Flow default'}")
         print(f"[auto] scene {sc['n']}: {kind} · {model or 'Flow default'}{' · ' + str(len(my)) + ' character ref(s)' if my else ''} …", flush=True)
-        r = subprocess.run(cmd, cwd=folder)
+        r = _run(cmd, folder)
         if r.returncode == DRIFT:
             print("[auto] Flow's page changed and gflow-cli can't find its buttons (exit 23). Stopping automation;"
                   " finish the remaining scenes by hand (prompts.txt) or update:  uv tool upgrade gflow-cli"); return False
         if r.returncode and r.returncode != DRIFT and agent and not out.exists():
             print("[auto] Flow Agent instruction was not accepted on this account; retrying without it")
             i = cmd.index("-i"); cmd = cmd[:i] + cmd[i + 2:]
-            r = subprocess.run(cmd, cwd=folder)
+            r = _run(cmd, folder)
         if r.returncode and alias:
             print(f"[auto] '{alias}' was not accepted; retrying with Flow's default model")
-            r = subprocess.run(cmd[:-2], cwd=folder)
+            r = _run(cmd[:-2], folder)
         if not out.exists() and kind == "image" and my:  # i2i wrote into tmp: move it in with the scene number
             new = sorted((STATE / "tmp").glob("*.*"), key=lambda p: p.stat().st_mtime)
             if new:
@@ -178,7 +207,9 @@ def drive(job, folder, cap, pace=(75, 120)):
         if r.returncode:
             print(f"[auto] scene {sc['n']} failed (exit {r.returncode}); it stays open for a manual upload.")
         wait = random.randint(*pace)
+        hstat("pacing", f"Scene {sc['n']} done · next in {wait}s (human pace)")
         print(f"[auto] pausing {wait}s so Flow sees a human pace"); time.sleep(wait)
+    hstat("idle", "")
     return True
 
 
@@ -186,7 +217,7 @@ KEYF = Path.home() / ".flow-bridge" / "key"
 BASEF = Path.home() / ".flow-bridge" / "base"
 LOGF = Path.home() / ".flow-bridge" / "helper.log"
 LABEL = os.environ.get("FLOW_ACCOUNT", "")
-VERSION = "2026.10.31.3"
+VERSION = "2026.10.31.4"
 DEFAULT_BASE = "https://moneyprinter-studio.onrender.com"
 RAW = "https://raw.githubusercontent.com/Miracledev-coder/moneyprinter-studio/main/tools/flow-bridge/flow_bridge.py"
 AGENT = "com.calmcraze.flowbridge"
@@ -404,7 +435,7 @@ def credits_loop():
 
 
 def ping(base, key):
-    body = json.dumps({"credits": CREDITS["n"]} if CREDITS["n"] is not None else {}).encode()
+    body = json.dumps(dict({"credits": CREDITS["n"]} if CREDITS["n"] is not None else {}, status=STATUS)).encode()
     req = urllib.request.Request(base.rstrip("/") + "/api/flow/ping", data=body, method="POST",
                                  headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "flow-bridge/" + VERSION, "X-Flow-Version": VERSION,
                                           **({"X-Flow-Account": LABEL} if LABEL else {})})

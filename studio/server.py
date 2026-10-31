@@ -672,7 +672,7 @@ TEMPLATES = {
 }
 
 # target total length in seconds; legacy keys kept for old clients
-LENGTHS = {"15": 15, "30": 30, "60": 60, "90": 90, "120": 120, "180": 180, "short": 15, "medium": 40, "long": 75}
+LENGTHS = {"15": 15, "30": 30, "45": 45, "60": 60, "90": 90, "120": 120, "180": 180, "short": 15, "medium": 40, "long": 75}
 
 
 @app.post("/api/generate")
@@ -695,7 +695,12 @@ async def generate(req: Request):
     if sum(1 for j in jobs.values() if j["status"] in ("queued", "running") and j.get("user") == user) >= 2:
         return JSONResponse({"error": "You already have 2 videos waiting. Let one finish first."}, 429)
     voice = b.get("voice") if b.get("voice") in VOICES.values() else VOICES["Ezinne — Nigerian, female"]
-    secs = LENGTHS.get(str(b.get("length")), 15)
+    secs = LENGTHS.get(str(b.get("length")))
+    if secs is None:  # custom length from the idea generator: 10 s .. 3 min (Shorts maximum)
+        try:
+            secs = max(10, min(int(float(b.get("length"))), 180))
+        except (TypeError, ValueError):
+            secs = 15
     if voice.startswith("elevenlabs:"):
         est = len(script) if script else round(secs * 2.1 * 6.5)
         if est > 2500:
@@ -1482,6 +1487,7 @@ def flow_status(req: Request):
     return {"connected": u in _keys(), "online": flow_online(u), "last_seen": seen or None,
             "label": m.get("label", ""), "device": m.get("device", ""), "paired": m.get("paired"),
             "version": _FLOW_VER.get(u, ""),
+            "helper": (_helper_msg(u) or ("", ""))[1], "helper_state": (_helper_msg(u) or ("", ""))[0],
             "stage": (_PSTAGE.get(u) or ("", 0))[0] if time.time() - (_PSTAGE.get(u) or ("", 0))[1] < 1800 else ""}
 
 
@@ -1912,14 +1918,37 @@ def flow_runner(user, jid, req):
             jobs[jid]["flow"] = j["id"]
         wait = int(os.environ.get("FLOW_WAIT", 900))
         t0 = time.time()
-        while time.time() - t0 < wait:
+        task_to = int(os.environ.get("FLOW_TASK_TIMEOUT", 720)) + 150  # per scene: helper's own limit + human-pace gap
+        signin_to = int(os.environ.get("FLOW_SIGNIN_WAIT", 900))
+        last_got, last_t, signin_since, why = -1, time.time(), None, ""
+        paused = 0.0
+        while time.time() - t0 - paused < wait:
             j = _fload(j["id"])
             got = sum(1 for x in j["filled"] if x)
+            if got != last_got:
+                last_got, last_t = got, time.time()
+            h = _helper_msg(user)
             if jid in jobs:
-                jobs[jid]["stage"] = f"Waiting for Google Flow clips {got}/{n}"
+                jobs[jid]["stage"] = f"Waiting for Google Flow clips {got}/{n}" + (f" · Helper: {h[1]}" if h and h[1] else "")
+            if h and h[0] == "signin":
+                signin_since = signin_since or time.time()
+                if jid in jobs:
+                    jobs[jid]["notice"] = "Flow isn't signed in on your Mac. Run flow-bridge --signin in Terminal; this video continues by itself once you're signed in."
+                if time.time() - signin_since > signin_to:
+                    why = f"Google Flow isn't signed in on your Mac (waited {signin_to // 60} min). Run flow-bridge --signin, then generate again."; break
+                last_t = time.time(); paused += 5
+            elif signin_since:
+                signin_since = None; last_t = time.time()
+                if jid in jobs and str(jobs[jid].get("notice", "")).startswith("Flow isn't signed in"):
+                    jobs[jid]["notice"] = ""
+            if got < n and time.time() - last_t > task_to:
+                why = f"Google Flow didn't deliver scene {got + 1} of {n} within {task_to // 60} min" + (f" (helper: {h[1]})" if h and h[1] else "") + "."; break
             if got == n or j.get("failed") or not flow_online(user) or _stopped(jid, req):
                 break
             time.sleep(5)
+        if why:
+            j["closed"] = True; _fsave(j)
+            e = RuntimeError(why); e.fatal = True; raise e
         out = {}
         for i, up in enumerate(j["filled"]):
             p = up and scn.upload_path(user, up["id"])
@@ -2102,6 +2131,14 @@ async def flow_engine_set(req: Request):
     return pr
 
 
+_HSTAT = {}  # user -> (state, message, when) reported by the helper
+
+
+def _helper_msg(u):
+    h = _HSTAT.get(u)
+    return h if h and time.time() - h[2] < 120 else None
+
+
 @app.post("/api/flow/ping")
 async def flow_ping(req: Request):
     """Mac helper heartbeat + work queue: returns open jobs (auto renders and Send-to-Flow jobs) that still need clips."""
@@ -2115,6 +2152,12 @@ async def flow_ping(req: Request):
             _fmeta(u, credits=cr, credits_at=time.time())
     except Exception:
         pass
+    try:
+        hs = (await req.json()).get("status")
+    except Exception:
+        hs = None
+    if isinstance(hs, dict):
+        _HSTAT[u] = (clean_text(hs.get("state"), 20), clean_text(hs.get("msg"), 200), time.time())
     lab = clean_text(req.headers.get("x-flow-account"), 80)
     if lab or time.time() - _fmeta(u).get("seen", 0) > 600:
         _fmeta(u, seen=time.time(), **({"label": lab} if lab else {}))

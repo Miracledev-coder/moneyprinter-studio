@@ -7,6 +7,9 @@
 <label>Platform<select id=i_plat><option>YouTube Shorts</option><option>Instagram Reels</option><option>TikTok-style</option></select></label>
 <label>Audience<input id=i_aud placeholder="e.g. Nigerian women 20-35"></label>
 <label>Tone<input id=i_tone placeholder="e.g. warm, witty"></label>
+<label>Format<select id=i_fmt><option value=short>Short (vertical)</option><option value=long>Long-form</option></select></label>
+<label>Script length<select id=i_len></select></label>
+<label id=i_custw hidden>Custom<input id=i_cust placeholder="e.g. 75s or 4m" style="width:110px"></label>
 <label>Ideas<select id=i_n><option>5</option><option selected>6</option><option>7</option><option>8</option><option>10</option></select></label>
 <button class=cc-btn id=i_go>Research &amp; ideas</button></div>
 <p class=cc-sub id=i_msg></p>
@@ -17,26 +20,34 @@
 <script>
 (()=>{const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let ST={research:null,ideas:[],pick:-1,script:null};const LK='mps_ideas_{{USER}}';
-const save=()=>{try{localStorage.setItem(LK,JSON.stringify({...ST,form:{t:$('i_topic').value,g:$('i_goal').value,p:$('i_plat').value,a:$('i_aud').value,o:$('i_tone').value,n:$('i_n').value}}))}catch(e){}};
+const save=()=>{try{localStorage.setItem(LK,JSON.stringify({...ST,form:{t:$('i_topic').value,g:$('i_goal').value,p:$('i_plat').value,a:$('i_aud').value,o:$('i_tone').value,n:$('i_n').value,f:$('i_fmt').value,l:$('i_len').value,c:$('i_cust').value}}))}catch(e){}};
 const post=async(u,b)=>{const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});const j=await r.json().catch(()=>({error:'Server error'}));if(!r.ok)throw new Error(j.error||r.status);return j};
-const form=()=>({topic:$('i_topic').value.trim(),goal:$('i_goal').value,platform:$('i_plat').value,audience:$('i_aud').value,tone:$('i_tone').value,count:+$('i_n').value,length:($('length')||{}).value||'short'});
+const LEN={short:[['15','15s'],['30','30s'],['40','30–45s (default)'],['45','45s'],['60','60s'],['90','90s'],['180','3 min (Shorts max)'],['custom','Custom…']],
+ long:[['300','5 min'],['480','8 min'],['600','10 min'],['900','15 min'],['1200','20 min'],['custom','Custom…']]};
+const fillLen=(keep)=>{const f=$('i_fmt').value,sel=$('i_len');sel.innerHTML=LEN[f].map(([v,l])=>`<option value=${v}>${l}</option>`).join('');sel.value=keep&&LEN[f].some(x=>x[0]==keep)?keep:(f=='long'?'480':'40');$('i_custw').hidden=sel.value!='custom'};
+const parseLen=()=>{const f=$('i_fmt').value;if($('i_len').value!='custom')return +$('i_len').value;const m=/^\s*(\d+(?:\.\d+)?)\s*(s|sec|m|min)?/i.exec($('i_cust').value||'');if(!m)return f=='long'?480:40;let v=+m[1]*((m[2]||(f=='long'?'m':'s'))[0].toLowerCase()=='m'?60:1);return Math.round(f=='long'?Math.max(60,Math.min(v,1200)):Math.max(10,Math.min(v,180)))};
+$('i_fmt').onchange=()=>{fillLen();save()};$('i_len').onchange=()=>{$('i_custw').hidden=$('i_len').value!='custom';save()};fillLen();
+const form=()=>({format:$('i_fmt').value,topic:$('i_topic').value.trim(),goal:$('i_goal').value,platform:$('i_plat').value,audience:$('i_aud').value,tone:$('i_tone').value,count:+$('i_n').value,length:String(parseLen())});
 $('i_chips').querySelectorAll('button').forEach(b=>b.onclick=()=>{const t=$('i_topic');t.value=t.value.trim()?t.value.trim()+', '+b.textContent:b.textContent});
 function drawRes(){const s=ST.research;if(!s)return;$('i_res').hidden=false;const ok=s.filter(x=>x.ok).length;$('i_rsum').textContent=`· ${ok}/${s.length} sources`;
 $('i_rbody').innerHTML=s.map(x=>`<div class=ci-src><b>${esc(x.name)}</b> <span class=${x.ok?'ci-ok':'ci-bad'}>${x.ok?x.items.length+' signals':'unavailable'}</span><ul>${x.items.slice(0,5).map(i=>`<li><a href="${esc(i.link)}" target=_blank rel=noopener>${esc(i.title)}</a> <span>${esc((i.meta||'').slice(0,90))}</span></li>`).join('')}</ul></div>`).join('')}
 function drawIdeas(){$('i_list').innerHTML=ST.ideas.map((d,k)=>`<div class="ci-card${k==ST.pick?' on':''}" data-k=${k}><div class=ci-top><span class=ci-type>${esc(d.hook_type)}</span><span class=ci-score>${d.score}/10</span></div><h3>${esc(d.title)}</h3><p class=ci-hook>“${esc(d.hook)}”</p><p class=ci-why>${esc(d.why)}</p><p class=ci-kw>${(d.keywords||[]).map(esc).join(' · ')}</p><button class=cc-btn data-w=${k}>Write script</button></div>`).join('');
 $('i_list').querySelectorAll('[data-w]').forEach(b=>b.onclick=()=>write(+b.dataset.w))}
 function drawScript(){const s=ST.script,el=$('i_script');if(!s){el.hidden=true;return}el.hidden=false;
-el.innerHTML=`<h3>Script · ~${s.seconds}s</h3><p><b>Hook</b> ${esc(s.hook)}</p><p><b>Tension</b> ${esc(s.tension)}</p><p><b>Payoff</b> ${esc(s.payoff)}</p><p><b>CTA</b> ${esc(s.cta)}</p><p class=ci-cap><b>Caption</b> ${esc(s.caption)}<br>${(s.hashtags||[]).map(esc).join(' ')}</p><button class=cc-btn id=i_use>Use this</button>`;$('i_use').onclick=use}
+const lbl=s.seconds>=60?`${Math.floor(s.seconds/60)} min${s.seconds%60?' '+s.seconds%60+'s':''}`:s.seconds+'s';
+el.innerHTML=`<h3>${s.format=='long'?'Long-form script':'Script'} · ~${lbl} · ${s.words||'?'} words${s.target_words?` (target ${s.target_words})`:''}</h3><p><b>Hook</b> ${esc(s.hook)}</p><p><b>Tension</b> ${esc(s.tension)}</p><p><b>Payoff</b> ${esc(s.payoff)}</p><p><b>CTA</b> ${esc(s.cta)}</p><p class=ci-cap><b>Caption</b> ${esc(s.caption)}<br>${(s.hashtags||[]).map(esc).join(' ')}</p><button class=cc-btn id=i_use>${s.format=='long'?'Send to Long-form':'Use this in Shorts'}</button>`;$('i_use').onclick=use}
 async function go(){const f=form();if(!f.topic){$('i_msg').textContent='Enter a niche or topic first.';return}$('i_go').disabled=true;ST.script=null;drawScript();
 try{$('i_msg').textContent='Reading live signals…';ST.research=(await post('/api/research',{topic:f.topic})).sources;drawRes();
 $('i_msg').textContent='Writing angles with Gemini…';ST.ideas=(await post('/api/ideas',{...f,research:ST.research})).ideas;ST.pick=-1;drawIdeas();$('i_msg').textContent='Pick an idea and write its script.';save()}
 catch(e){$('i_msg').textContent=e.message}finally{$('i_go').disabled=false}}
 async function write(k){ST.pick=k;drawIdeas();$('i_msg').textContent='Writing script…';try{ST.script=await post('/api/script',{...form(),idea:ST.ideas[k]});drawScript();$('i_msg').textContent='';save();$('i_script').scrollIntoView({behavior:'smooth'})}catch(e){$('i_msg').textContent=e.message}}
-function use(){const s=ST.script,d=ST.ideas[ST.pick]||{};const sb=document.querySelector('#mode button[data-v=script]');if(sb)sb.click();$('prompt').value=s.full;
+function use(){const s=ST.script,d=ST.ideas[ST.pick]||{};
+if(s.format=='long'){try{localStorage.setItem('mps_send_long',JSON.stringify({title:d.title||'',script:s.full,seconds:s.seconds}))}catch(e){}location.href='/longform';return}
+const L=$('length');if(L&&s.seconds){const v=String(Math.min(180,s.seconds));if(![...L.options].some(o=>o.value==v)){const o=document.createElement('option');o.value=v;o.textContent=v+'s';L.appendChild(o)}L.value=v;L.dispatchEvent(new Event('change'))}const sb=document.querySelector('#mode button[data-v=script]');if(sb)sb.click();$('prompt').value=s.full;
 $('terms').value=[...new Set([...(d.keywords||[]),...(s.keywords||[])])].slice(0,6).join(', ');location.hash='#create'}
 $('i_go').onclick=go;
 document.addEventListener('DOMContentLoaded',()=>{const p=($('prompt')||{closest:()=>null}).closest('.cc-prompt');if(p&&!$('terms')){const w=document.createElement('label');w.className='ci-terms';w.innerHTML='Footage keywords <input id=terms placeholder="optional, comma separated, e.g. skincare, smartphone filming">';p.after(w)}
-try{const o=JSON.parse(localStorage.getItem(LK)||'null');if(o){ST={research:o.research,ideas:o.ideas||[],pick:o.pick??-1,script:o.script};const f=o.form||{};$('i_topic').value=f.t||'';if(f.g)$('i_goal').value=f.g;if(f.p)$('i_plat').value=f.p;$('i_aud').value=f.a||'';$('i_tone').value=f.o||'';if(f.n)$('i_n').value=f.n;drawRes();drawIdeas();drawScript()}}catch(e){}
+try{const o=JSON.parse(localStorage.getItem(LK)||'null');if(o){ST={research:o.research,ideas:o.ideas||[],pick:o.pick??-1,script:o.script};const f=o.form||{};$('i_topic').value=f.t||'';if(f.g)$('i_goal').value=f.g;if(f.f){$('i_fmt').value=f.f;fillLen(f.l);if(f.c)$('i_cust').value=f.c;$('i_custw').hidden=$('i_len').value!='custom'}if(f.p)$('i_plat').value=f.p;$('i_aud').value=f.a||'';$('i_tone').value=f.o||'';if(f.n)$('i_n').value=f.n;drawRes();drawIdeas();drawScript()}}catch(e){}
 const view=()=>{const ide=location.hash=='#ideas';document.querySelectorAll('#create>*').forEach(e=>{if(e.id=='ideas')e.hidden=!ide;else if(e.tagName!='SCRIPT')e.style.display=ide?'none':''});
 document.querySelectorAll('.cc-nav').forEach(a=>{const h=a.getAttribute('href').replace('/shorts','');a.classList.toggle('on',h==(location.hash||'#create')||(!ide&&h=='#create'&&location.hash!='#gallery'))});if(!ide)window.scrollTo(0,location.hash=='#gallery'?$('gallery').offsetTop:0)};
 addEventListener('hashchange',view);view()})})();
