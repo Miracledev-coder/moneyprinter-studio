@@ -1,0 +1,53 @@
+<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Home · MoneyPrinter Studio</title>
+<link rel=icon href="/static/favicon.svg"><meta name=theme-color content="#0b0a1a"><link rel=stylesheet href="/static/cc-theme.css">
+<link rel=preconnect href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@1,400&family=Playfair+Display:wght@600;800&family=Inter:wght@400;500;600&display=swap" rel=stylesheet>
+<style>
+.hm{max-width:1180px;margin:0 auto;padding:6px 22px 70px;font-family:Inter,system-ui,sans-serif;color:#f4efe6}
+.hero{position:relative;border-radius:24px;overflow:hidden;padding:44px 40px;background:radial-gradient(circle at 85% 10%,#a855f755,transparent 45%),radial-gradient(circle at 10% 100%,#e8364a33,transparent 40%),#2a2550;border:1px solid #ffffff14}
+.hero:after{content:"";position:absolute;inset:0;background-image:linear-gradient(#ffffff07 1px,transparent 1px),linear-gradient(90deg,#ffffff07 1px,transparent 1px);background-size:48px 48px;pointer-events:none}
+.eb{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#c9b8f5}
+.hero h1{font:800 clamp(32px,5vw,58px)/1.05 'Playfair Display',serif;margin:10px 0 8px}.hero h1 em{font:italic 400 1.08em 'Cormorant Garamond',serif;color:#c08bff}
+.hero p{color:#cfc8e8;max-width:560px;margin:0 0 20px}
+.qs{position:relative;z-index:1;display:flex;gap:10px;max-width:760px;background:#0b0a1acc;border:1px solid #3d3770;border-radius:16px;padding:8px}
+.qs input{flex:1;background:none;border:0;color:#f4efe6;font:15px Inter,sans-serif;padding:10px 12px;outline:none;min-width:0}
+.qs button{border:0;border-radius:11px;padding:10px 16px;font:600 14px Inter,sans-serif;cursor:pointer;color:#fff;background:#a855f7;white-space:nowrap}.qs button.alt{background:#1c1936;border:1px solid #3d3770}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:20px}@media(max-width:900px){.cards{grid-template-columns:repeat(2,1fr)}}
+.c{display:block;text-decoration:none;color:#f4efe6;background:#141230;border:1px solid #2a2550;border-radius:18px;padding:20px;min-height:150px;position:relative;overflow:hidden;transition:.2s}
+.c:hover{transform:translateY(-3px);border-color:#a855f7}.c .k{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#a6a1c0}.c h3{font:700 22px 'Playfair Display',serif;margin:8px 0 6px}.c p{font-size:13px;color:#bdb6d6;margin:0}
+.c .ic{position:absolute;right:16px;top:16px;font-size:22px;opacity:.85}.c.long{background:linear-gradient(160deg,#2a1020,#141230 60%)}.c.long .k{color:#ff8a8a}
+h2{font:700 24px 'Playfair Display',serif;margin:34px 0 4px;display:flex;justify-content:space-between;align-items:baseline}h2 a{font:500 13px Inter;color:#c08bff;text-decoration:none}
+.sub{color:#a6a1c0;font-size:13px;margin:0 0 14px}
+.usage{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}@media(max-width:700px){.usage{grid-template-columns:repeat(2,1fr)}}
+.u{background:#141230;border:1px solid #2a2550;border-radius:14px;padding:14px}.u b{font:800 22px 'Playfair Display',serif}.u small{color:#a6a1c0;font-size:12px;display:block}.u .bar{height:6px;background:#26224a;border-radius:6px;margin-top:8px;overflow:hidden}.u .bar i{display:block;height:100%;background:#a855f7}
+.vids{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px}
+.v{background:#141230;border:1px solid #2a2550;border-radius:14px;overflow:hidden}.v .m{aspect-ratio:9/16;background:#000;position:relative}.v.w .m{aspect-ratio:16/9}.v video{width:100%;height:100%;object-fit:cover;display:block}
+.v .m span{position:absolute;left:8px;top:8px;font-size:10px;background:#000a;padding:3px 7px;border-radius:6px}.v .t{padding:9px 10px;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.v .st{display:grid;place-items:center;height:100%;color:#cfc8e8;font-size:12px;text-align:center;padding:10px}
+.empty{border:1px dashed #3d3770;border-radius:14px;padding:30px;text-align:center;color:#a6a1c0}
+@media(max-width:560px){.hero{padding:28px 20px}.qs{flex-wrap:wrap}.qs input{flex-basis:100%}.qs button{flex:1}.cards{gap:10px}.c{min-height:130px;padding:16px}.c h3{font-size:19px}}
+.nudge{display:none;align-items:center;gap:14px;margin-top:16px;padding:14px 18px;border-radius:16px;background:#141230;border:1px solid #a855f766}.nudge p{margin:0;flex:1;font-size:14px;color:#cfc8e8}.nudge a{background:#a855f7;color:#fff;text-decoration:none;padding:9px 14px;border-radius:10px;font:600 13px Inter;white-space:nowrap}@media(max-width:560px){.nudge{flex-wrap:wrap}}
+</style></head><body>
+<div class=cc-shell>{{SHELL}}<div>{{HEADER}}
+<main class=hm>
+<section class=hero><div class=eb>Calm Craze Creatives · Studio</div><h1><span id=greet>Welcome back</span>, <em>{{USER}}</em></h1>
+<p>What are we making today? Drop an idea and the AI director writes the hook, plans every shot, and edits it with matching footage.</p>
+<form class=qs id=qs><input id=qi placeholder="Paste an idea, e.g. Why Lagos traffic is a hidden business opportunity" maxlength=300><button>Make a Short</button><button type=button class=alt id=qideas>Get ideas</button></form></section>
+<div class=nudge id=nudge><span style="font-size:22px">☁️</span><p id=nudget></p><a href="/account">Connect my Google Drive</a></div>
+<div class=cards>
+<a class=c href="/shorts#create"><span class=ic>📱</span><div class=k>9:16 · 15–180s</div><h3>Shorts</h3><p>TikTok, Reels and YouTube Shorts with the AI director.</p></a>
+<a class="c long" href="/longform"><span class=ic>▶</span><div class=k>16:9 · Long</div><h3>YouTube Long-form</h3><p>Chapters, part-by-part rendering, title and description.</p></a>
+<a class=c href="/shorts#ideas"><span class=ic>💡</span><div class=k>Research</div><h3>Ideas</h3><p>Trending angles with hooks, scripts and captions.</p></a>
+<a class=c href="/shorts#gallery"><span class=ic>🎞</span><div class=k>Library</div><h3>History</h3><p>Every video you have made, ready to download.</p></a>
+</div>
+<h2>Today</h2><p class=sub>Free daily limits reset at 01:00 Lagos time.</p><div class=usage id=usage></div>
+<h2>Recent videos <a href="/shorts#gallery">See all →</a></h2><div class=vids id=vids><div class=empty>Your videos will show up here.</div></div>
+</main></div></div>
+<script>(()=>{const g=i=>document.getElementById(i),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+document.querySelector('.cc-nav[href="/"]').classList.add('on');const h=new Date().getHours();g('greet').textContent=h<12?'Good morning':h<17?'Good afternoon':'Good evening';
+g('qs').onsubmit=e=>{e.preventDefault();location.href='/shorts?idea='+encodeURIComponent(g('qi').value)+'#create'};g('qideas').onclick=()=>location.href='/shorts?niche='+encodeURIComponent(g('qi').value)+'#ideas';
+fetch('/api/drive').then(r=>r.json()).then(d=>{if(d.mode==='own'||!d.can_connect)return;g('nudget').innerHTML=d.mode==='admin'?'<b>Keep your videos in your own Google Drive.</b> Right now they are stored in the studio’s shared Drive.':'<b>Your videos are only on the server for now</b> and can vanish when it restarts. Connect your Google Drive to keep them.';g('nudge').style.display='flex'});
+fetch('/api/usage').then(r=>r.json()).then(d=>{const L={videos:'Videos',minutes:'Long-form minutes',ai:'AI requests',eleven_chars:'ElevenLabs characters'};
+ g('usage').innerHTML=Object.keys(L).map(k=>{const u=d.used[k]||0,c=d.caps[k]||1;return `<div class=u><small>${L[k]}</small><b>${u.toLocaleString()}</b> <small style="display:inline">/ ${c.toLocaleString()}</small><div class=bar><i style="width:${Math.min(100,u/c*100)}%"></i></div></div>`}).join('')});
+fetch('/api/history').then(r=>r.json()).then(d=>{d=d.slice(0,10);if(!d.length)return;g('vids').innerHTML=d.map(j=>{const w=j.aspect=='16:9'?' w':'';
+ const m=j.status=='done'?`<video muted playsinline preload=metadata ${j.drive?`poster="/thumb/${j.id}"`:''} src="/video/${j.id}#t=1.5" onmouseenter="this.play()" onmouseleave="this.pause()"></video>`:`<div class=st>${j.status=='error'?'Failed':esc(j.part||'Rendering…')}${j.progress?' · '+j.progress+'%':''}</div>`;
+ return `<a class="v${w}" href="${j.kind=='long'?'/longform':'/shorts#gallery'}" style="color:inherit;text-decoration:none"><div class=m>${m}<span>${j.kind=='long'?'LONG':j.aspect}</span></div><div class=t title="${esc(j.title)}">${esc((j.yt&&j.yt.title)||j.title)}</div></a>`}).join('')})})()</script></body></html>

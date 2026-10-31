@@ -1,6 +1,45 @@
 <!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Sign in · MoneyPrinter Studio</title>
-<link rel=icon href="/static/favicon.svg"><link rel=apple-touch-icon href="/static/icon-192.png"><link rel=stylesheet href="/static/cc-theme.css"></head><body>
-<form class=cc-login method=post action=/login><img src="/static/logo-white.svg" alt="Calm Craze Creatives"><h1>MoneyPrinter Studio</h1>
-<div class=cc-field><label>Username</label><input name=username autocomplete=username required></div>
-<div class=cc-field><label>Password</label><input name=password type=password autocomplete=current-password required></div><label style="display:flex;gap:8px;align-items:center;font-size:14px;margin:4px 0 12px"><input type=checkbox name=remember value=1 checked style="width:auto"> Remember me for 30 days</label>
-<div class=cc-err style="font-size:13px;min-height:18px">{{ERR}}</div><button class=cc-btn>Sign in</button></form></body></html>
+<link rel=icon href="/static/favicon.svg"><meta name=theme-color content="#0b0a1a">
+<link rel=preconnect href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@1,400&family=Playfair+Display:wght@600;800&family=Inter:wght@400;500;600&display=swap" rel=stylesheet>
+<style>
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:#0b0a1a;color:#f4efe6;font:15px/1.5 Inter,system-ui,sans-serif}
+.bg{position:fixed;inset:0;overflow:hidden;z-index:0}.bg i{position:absolute;border-radius:50%;filter:blur(90px);opacity:.45;animation:drift 18s ease-in-out infinite alternate}
+.bg i:nth-child(1){width:520px;height:520px;background:#a855f7;top:-160px;left:-120px}.bg i:nth-child(2){width:460px;height:460px;background:#2a2550;bottom:-140px;right:-100px;animation-delay:-6s}.bg i:nth-child(3){width:260px;height:260px;background:#e8364a;top:55%;left:60%;opacity:.18;animation-delay:-11s}
+@keyframes drift{to{transform:translate(60px,40px) scale(1.15)}}
+.bg:after{content:"";position:absolute;inset:0;background-image:linear-gradient(#ffffff08 1px,transparent 1px),linear-gradient(90deg,#ffffff08 1px,transparent 1px);background-size:56px 56px;mask:radial-gradient(circle at 50% 45%,#000 0,transparent 70%)}
+.wrap{position:relative;z-index:1;min-height:100vh;display:grid;place-items:center;padding:28px 16px}
+.card{width:100%;max-width:420px;background:#2a2550cc;backdrop-filter:blur(14px);border:1px solid #ffffff1a;border-radius:22px;padding:34px 30px 26px;box-shadow:0 30px 80px #0008;animation:rise .6s ease both}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}}
+.logo{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:22px}.logo img{height:38px}
+.eyebrow{text-align:center;font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#c9b8f5}
+h1{font:800 34px/1.1 'Playfair Display',serif;text-align:center;margin:8px 0 4px}h1 em{font:italic 400 36px 'Cormorant Garamond',serif;color:#c08bff}
+.tag{text-align:center;color:#bdb6d6;font-size:14px;margin:0 0 22px}
+label{display:block;font-size:12px;font-weight:600;color:#cfc8e8;margin:14px 0 6px}
+.in{position:relative}input[type=text],input[type=password]{width:100%;background:#0b0a1a;color:#f4efe6;border:1px solid #3d3770;border-radius:12px;padding:12px 14px;font:inherit;outline:none;transition:.15s}
+input:focus{border-color:#a855f7;box-shadow:0 0 0 3px #a855f733}
+.eye{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:0;color:#bdb6d6;font-size:12px;font-weight:600;cursor:pointer;padding:6px 8px}
+.row{display:flex;align-items:center;justify-content:space-between;margin-top:14px;font-size:13px;color:#cfc8e8}.row input{accent-color:#a855f7;margin-right:6px}
+button.go{width:100%;margin-top:20px;padding:13px;border:0;border-radius:12px;background:#a855f7;color:#fff;font:600 15px Inter,sans-serif;cursor:pointer;transition:.15s;box-shadow:0 10px 30px #a855f755}button.go:hover{background:#9333ea;transform:translateY(-1px)}button.go:disabled{opacity:.7;cursor:wait}
+.err{background:#e8364a1f;border:1px solid #e8364a66;color:#ffc9cf;border-radius:12px;padding:10px 12px;font-size:13px;margin-bottom:6px}.err:empty{display:none}
+.note{display:none;margin-top:12px;font-size:12.5px;color:#d9c9ff;text-align:center}.note.on{display:block}
+.foot{text-align:center;font-size:12px;color:#8c86aa;margin-top:20px}.stats{display:flex;justify-content:center;gap:22px;margin-top:18px;font-size:11px;color:#a6a1c0;text-transform:uppercase;letter-spacing:.1em}.stats b{display:block;font:800 18px 'Playfair Display',serif;color:#f4efe6;letter-spacing:0;text-transform:none}
+@media(max-width:480px){.card{padding:28px 20px 22px}h1{font-size:29px}h1 em{font-size:31px}}
+</style></head><body><div class=bg><i></i><i></i><i></i></div>
+<div class=wrap><form class=card method=post action=/login id=f>
+<div class=logo><img src="/static/logo-white.svg" alt="Calm Craze Creatives"></div>
+<div class=eyebrow>Calm Craze Creatives · Private studio</div>
+<h1>MoneyPrinter <em>Studio</em></h1>
+<p class=tag>Faceless Shorts and YouTube long-form, written, voiced and edited for you.</p>
+<div class=err role=alert>{{ERR}}</div>
+<label for=u>Username</label><input id=u type=text name=username autocomplete=username required autofocus autocapitalize=none spellcheck=false>
+<label for=p>Password</label><div class=in><input id=p type=password name=password autocomplete=current-password required><button type=button class=eye id=eye aria-label="Show password">Show</button></div>
+<div class=row><label style="margin:0;font-weight:500"><input type=checkbox name=remember value=1 checked>Remember me for 30 days</label></div>
+<button class=go id=go>Sign in</button>
+<p class=note id=wake>☕ Waking the free server up. This can take up to a minute after it has been asleep. Please keep this page open.</p>
+<div class=stats><span><b>9:16</b>Shorts</span><span><b>16:9</b>Long-form</span><span><b>AI</b>Director</span></div>
+<p class=foot>Invite-only. Ask Miracle for an account.</p>
+</form></div>
+<script>const e=document.getElementById('eye'),p=document.getElementById('p');e.onclick=()=>{const s=p.type=='password';p.type=s?'text':'password';e.textContent=s?'Hide':'Show';e.setAttribute('aria-label',s?'Hide password':'Show password')};
+document.getElementById('f').onsubmit=()=>{const g=document.getElementById('go');g.disabled=true;g.textContent='Signing in…';setTimeout(()=>document.getElementById('wake').classList.add('on'),3500)};
+if(!navigator.onLine)document.querySelector('.err').textContent="You're offline. Check your connection and try again.";</script>
+</body></html>

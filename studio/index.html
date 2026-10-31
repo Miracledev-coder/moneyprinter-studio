@@ -3,8 +3,8 @@
 <div class=cc-shell>{{SHELL}}<div>{{HEADER}}
 <main class=cc-main id=create>
 {{IDEAS}}
-<h1 class=cc-h1>What video should we make?</h1><p class=cc-sub>Describe a topic, or paste your own script. We write, voice, and edit it with stock footage.</p>
-<div style="text-align:center"><div class=cc-tabs id=mode><button class=on data-v=topic>Topic</button><button data-v=script>My script</button><button data-v=long>Long script</button></div></div>
+<h1 class=cc-h1>What video should we make?</h1><p class=cc-sub>Shorts · 9:16 for TikTok, Reels and YouTube Shorts. Need a 10-minute YouTube video? Use <a href="/longform" style="color:#ff6b6b">Long-form</a>. Describe a topic, or paste your own script. We write, voice, and edit it with stock footage.</p>
+<div style="text-align:center"><div class=cc-tabs id=mode><button class=on data-v=topic>Topic</button><button data-v=script>My script</button></div></div>
 <div class=cc-prompt>
 <textarea id=prompt placeholder="e.g. 3 habits of calm, productive people"></textarea>
 <div class=cc-bar>
@@ -32,7 +32,6 @@
 <div class=cc-field><label>Speaking speed</label><select id=rate><option value=0.9>Slower</option><option value=1.0 selected>Normal</option><option value=1.1>Faster</option></select></div>
 </div></details></div>
 {{SCENES}}
-{{LONG}}
 <div class=cc-err id=msg style="text-align:center;margin-top:12px;font-size:14px"></div>
 <p class=cc-sub id=eta style="color:var(--dim);margin:8px 0 0"></p><p class=cc-sub style="color:var(--dim);margin:6px 0 0;font-size:12px">⚠️ The free server keeps only your recent videos and wipes them when it restarts, unless Google Drive is connected (videos marked “Saved to Drive” are kept). Download important videos.</p>
 <script>(()=>{const F=window.fetch.bind(window);let bar;const show=t=>{if(!bar){bar=document.createElement('div');bar.style.cssText='position:fixed;top:0;left:0;right:0;z-index:99;background:#a855f7;color:#fff;text-align:center;padding:8px;font:14px sans-serif';document.body.appendChild(bar)}bar.textContent=t;bar.style.display=t?'block':'none'};
@@ -76,3 +75,4 @@ neon:{sub_bold:'1',sub_italic:'0',sub_style:'custom',sub_pos:'center',font_size:
 chunk:{sub_bold:'1',sub_italic:'0',sub_style:'custom',sub_pos:'center',font_size:96,sub_font:'Anton-Regular.ttf',sub_color:'#FFFFFF',sub_stroke:'#000000',sub_stroke_w:5,sub_bg_on:'0',sub_upper:'1',p:'chunk'}};
 document.querySelectorAll('.cc-pre').forEach(btn=>btn.onclick=()=>{const P=PRESETS[btn.dataset.p];for(const k in P){const e=$(k);if(k=='p'||!e)continue;if(e.tagName=='BUTTON'){e.dataset.on=P[k];e._r&&e._r()}else e.value=P[k]}window.ccPreset=P.p;document.querySelectorAll('.cc-pre').forEach(x=>x.classList.toggle('on',x===btn))});
 </script></body></html>
+<script>(()=>{const q=new URLSearchParams(location.search),i=q.get('idea'),n=q.get('niche');if(i){const p=document.getElementById('prompt');p.value=i;p.dispatchEvent(new Event('input'))}if(n){const t=document.querySelector('#ideas input');if(t)t.value=n}if(i||n)history.replaceState(null,'','/shorts'+location.hash)})()</script>

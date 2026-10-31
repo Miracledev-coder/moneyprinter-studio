@@ -1,0 +1,39 @@
+<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Account · MoneyPrinter Studio</title>
+<link rel=icon href="/static/favicon.svg"><meta name=theme-color content="#0b0a1a"><link rel=stylesheet href="/static/cc-theme.css">
+<link rel=preconnect href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&family=Inter:wght@400;500;600&display=swap" rel=stylesheet>
+<style>
+.ac{max-width:820px;margin:0 auto;padding:10px 22px 70px;font-family:Inter,system-ui,sans-serif;color:#f4efe6}
+.ac h1{font:800 clamp(28px,4vw,40px) 'Playfair Display',serif;margin:8px 0 4px}.ac .sub{color:#a6a1c0;margin:0 0 22px}
+.card{background:#141230;border:1px solid #2a2550;border-radius:20px;padding:24px;margin-bottom:16px}
+.card h2{font:700 21px 'Playfair Display',serif;margin:0 0 6px;display:flex;gap:10px;align-items:center}
+.pill{font:600 11px Inter;letter-spacing:.08em;text-transform:uppercase;padding:4px 9px;border-radius:999px}.pill.ok{background:#16a34a33;color:#6ee7a0}.pill.mid{background:#a855f733;color:#d4b4ff}.pill.warn{background:#f59e0b33;color:#fcd38a}
+.card p{color:#cfc8e8;font-size:14px;line-height:1.55;margin:8px 0}
+.btn{display:inline-block;border:0;border-radius:11px;padding:11px 18px;font:600 14px Inter;cursor:pointer;color:#fff;background:#a855f7;text-decoration:none;margin:8px 8px 0 0}.btn.ghost{background:#1c1936;border:1px solid #3d3770}.btn.danger{background:#3a1424;border:1px solid #7a2a44;color:#ffb3c4}
+.msg{display:none;padding:12px 16px;border-radius:12px;background:#2a2550;border:1px solid #a855f755;margin-bottom:16px;font-size:14px}
+ul.fine{color:#a6a1c0;font-size:13px;padding-left:18px;margin:12px 0 0}ul.fine li{margin:4px 0}
+</style></head><body>
+<div class=cc-shell>{{SHELL}}<div>{{HEADER}}
+<main class=ac>
+<h1>Account</h1><p class=sub>Signed in as <b>{{USER}}</b></p>
+<div class=msg id=msg>{{MSG}}</div>
+<section class=card><h2>Google Drive storage <span class=pill id=pill>…</span></h2>
+<p id=desc>Checking…</p>
+<div id=acts></div>
+<ul class=fine><li>The app only asks for <b>drive.file</b>: it can see the files it creates, nothing else in your Drive.</li>
+<li>Your connection is encrypted on the server and only used for your own videos. It is never sent to the browser.</li>
+<li>Disconnecting stops new uploads and revokes access. Files already in your Drive stay there.</li></ul></section>
+<section class=card><h2>Session</h2><p>You stay signed in for 30 days if “Remember me” was ticked.</p><a class="btn ghost" href="/logout">Sign out</a> {{ADMIN}}</section>
+</main></div></div>
+<script>
+const g=id=>document.getElementById(id);document.querySelector('.cc-nav[href="/account"]')?.classList.add('on');
+if(g('msg').textContent.trim())g('msg').style.display='block';
+function show(d){const p=g('pill');
+ if(d.mode==='own'){p.className='pill ok';p.textContent='Your Drive';g('desc').innerHTML=`Connected${d.email?' as <b>'+d.email.replace(/[<>&]/g,'')+'</b>':''}. Videos, thumbnails and your History are saved to the <b>“${d.folder}”</b> folder in your Google Drive, and History plays from there.`;
+  g('acts').innerHTML='<a class="btn ghost" href="/oauth/google/start">Reconnect</a><button class="btn danger" id=dis>Disconnect</button>';
+  g('dis').onclick=async()=>{if(!confirm('Disconnect your Google Drive? New videos will go to the studio Drive instead. Files already saved stay in your Drive.'))return;
+   const r=await fetch('/api/drive/disconnect',{method:'POST'});const j=await r.json();if(!r.ok){alert(j.error||'Failed');return}g('msg').textContent='Disconnected.';g('msg').style.display='block';load()}}
+ else{p.className=d.mode==='admin'?'pill mid':'pill warn';p.textContent=d.mode==='admin'?'Studio Drive':'Server only';
+  g('desc').innerHTML=d.mode==='admin'?`Your videos are saved in the studio’s shared Drive (<b>${d.folder}</b>). Connect your own Google Drive to keep them in your account.`:'⚠️ Your videos are only stored on the server and can be lost when it restarts. Connect your Google Drive to keep them safe.';
+  g('acts').innerHTML=d.can_connect?'<a class=btn href="/oauth/google/start">Connect my Google Drive</a>':'<p style="color:#a6a1c0">Google Drive is not set up on this server yet. Ask Miracle.</p>'}}
+function load(){fetch('/api/drive').then(r=>r.json()).then(show)}load();
+</script></body></html>

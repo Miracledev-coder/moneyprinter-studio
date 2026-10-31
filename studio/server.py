@@ -51,7 +51,7 @@ def load_users():
 
 USERS = load_users()
 _SECRETS = [v for k in ("ELEVENLABS_API_KEY", "RENDER_API_KEY", "GEMINI_API_KEY", "PIXABAY_API_KEY", "HF_TOKEN",
-                        "SESSION_SECRET", "PEXELS_API_KEY", "GDRIVE_CLIENT_SECRET", "GDRIVE_REFRESH_TOKEN") if len(v := os.environ.get(k, "")) >= 6]
+                        "SESSION_SECRET", "PEXELS_API_KEY", "GDRIVE_CLIENT_SECRET", "GDRIVE_REFRESH_TOKEN", "TOKEN_ENC_KEY") if len(v := os.environ.get(k, "")) >= 6]
 _SECRETS += [p for p in USERS.values()]
 
 
@@ -151,6 +151,7 @@ HIST = OUT_DIR / "history.json"
 META = ("status", "user", "title", "aspect", "voice", "created", "elapsed", "error", "video", "req", "retries", "kind", "part", "yt", "parent", "drive")
 sys.path.insert(0, str(Path(__file__).parent))
 import gdrive as gd  # noqa: E402
+import urllib.parse  # noqa: E402
 
 
 def _load(items):
@@ -176,12 +177,21 @@ try:
     _load(_json.loads(HIST.read_text()).items())
 except Exception:
     pass
-if gd.enabled():  # Render's disk is wiped on restart: rebuild History from Drive
+if gd.enabled():  # Render's disk is wiped on restart: rebuild History (and the encrypted token vault) from Drive
     try:
-        _load((gd.get_json("history.json") or {}).items())
-        print("history restored from Drive:", len(jobs), "items", flush=True)
+        _load((gd.admin().get_json("history.json") or {}).items())
+        print("history restored from admin Drive:", len(jobs), "items", flush=True)
     except Exception as e:  # noqa: BLE001
         print("drive history load failed:", type(e).__name__, flush=True)
+try:
+    print("drive accounts connected:", gd.load_vault(), flush=True)
+except Exception as e:  # noqa: BLE001
+    print("token vault load failed:", type(e).__name__, flush=True)
+for _u in list(gd._users):
+    try:
+        _load(((k, v) for k, v in (gd.account_for(_u).get_json("history.json") or {}).items() if isinstance(v, dict) and v.get("user") == _u))
+    except Exception as e:  # noqa: BLE001
+        print("user drive history load failed:", type(e).__name__, flush=True)
 
 
 def save_history():
@@ -192,8 +202,18 @@ def save_history():
         _up.history_changed()
 
 
-def _snapshot():
-    return {k: {m: v.get(m) for m in META} for k, v in list(jobs.items())}
+def _snapshot(key):
+    """history.json for one Drive: a connected user's Drive holds only their own items; the admin Drive holds the rest."""
+    out = {}
+    for k, v in list(jobs.items()):
+        acct = (v.get("drive") or {}).get("acct") or gd.ADMIN
+        own = acct if not acct.startswith("~") else gd.ADMIN
+        if key == gd.ADMIN and own != gd.ADMIN:
+            continue
+        if key != gd.ADMIN and (v.get("user") != key or own != key):
+            continue
+        out[k] = {m: v.get(m) for m in META}
+    return out
 
 
 gd.Uploader.snapshot = staticmethod(_snapshot)
@@ -248,6 +268,19 @@ def render(jid, req, dest):
             req["_local"] = scn.materialize(jid, req.get("_user", ""), req["scenes"], utils.storage_dir("local_videos", create=True))
             if not req["_local"]:
                 raise RuntimeError("None of the chosen scene clips could be loaded.")
+        if req.get("smart", True) and not req.get("scenes") and not req.get("_local"):
+            import director
+            try:
+                d = director.direct(jid, clean_text(req.get("topic"), 300), clean_text(req.get("script"), 4000), req["_secs"],
+                                    req["_voice"], num(req.get("rate"), 1.0, 0.8, 1.2), req.get("aspect") or "9:16",
+                                    utils.storage_dir("local_videos", create=True), log=lambda m: print(m, flush=True))
+                if len(d["clips"]) >= 2:
+                    req.update(script=d["script"], _local=d["clips"], _clipmax=d["clip_max"])
+                    req["_director"] = {k: d[k] for k in ("look", "report", "critique", "hook", "draft")}
+                    if jid in jobs:
+                        jobs[jid]["script"] = d["script"]
+            except Exception as e:
+                print("director failed, using classic pipeline:", redact(str(e))[:200], flush=True)
         for attempt in range(3):  # Gemini sometimes returns a transient 503
             res = tm.start(jid, make_params(req), stop_at="video")
             vids = (res or {}).get("videos") or []
@@ -312,7 +345,7 @@ def run_long(lid, j):
     for p in done:  # parts may only be in Drive after a restart
         pj = jobs[p]
         if not Path(pj["video"]).exists() and pj.get("drive"):
-            gd.download(pj["drive"]["id"], pj["video"])
+            gd.account_by_key(pj["drive"].get("acct")).download(pj["drive"]["id"], pj["video"])
         files.append(pj["video"])
     final = OUT_DIR / f"{lid}.mp4"
     lf.concat(files, final)
@@ -345,7 +378,7 @@ def worker():
         finally:
             j["elapsed"] = round(time.time() - j["started"])
             busy = {k[:8] for k, v in jobs.items() if v.get("kind") == "long" and v["status"] in ("queued", "running")}
-            pending = {Path(v["video"]).name for v in jobs.values() if v.get("video") and not v.get("drive")} if gd.enabled() else set()
+            pending = {Path(v["video"]).name for v in jobs.values() if v.get("video") and not v.get("drive")} if gd.configured() else set()
             old = [f for f in sorted(OUT_DIR.glob("*.mp4"), key=os.path.getmtime) if f.name[:8] not in busy and f.name not in pending][:-KEEP_VIDEOS]
             for f in old:
                 f.unlink(missing_ok=True)
@@ -388,6 +421,8 @@ PAGE = ((HERE / "index.html").read_text()
         .replace("{{HEADER}}", (HERE / "static/cc-header.html").read_text())
         .replace("{{APP}}", "MoneyPrinter Studio"))
 LOGIN = (Path(__file__).parent / "login.html").read_text()
+LONGP = ((HERE / "longform.html").read_text().replace("{{SHELL}}", (HERE / "static/cc-shell.html").read_text())
+         .replace("{{HEADER}}", (HERE / "static/cc-header.html").read_text()).replace("{{APP}}", "MoneyPrinter Studio"))
 LOCKED = "<h2 style='font-family:sans-serif;text-align:center;margin-top:20vh'>🔒 MoneyPrinter Studio is locked.<br><small>The owner must set APP_USERS.</small></h2>"
 
 
@@ -396,7 +431,46 @@ def health():
     return {"ok": True}
 
 
+def voice_opts():
+    opts = '<optgroup label="Free voices (Edge)">' + "".join(f'<option value="{v}">{k}</option>' for k, v in EDGE_VOICES.items()) + "</optgroup>"
+    if os.environ.get("ELEVENLABS_API_KEY"):
+        opts += '<optgroup label="ElevenLabs (uses credits)">' + "".join(f'<option value="{v}">{k}</option>' for k, v in ELEVEN_VOICES.items()) + "</optgroup>"
+    return opts
+
+
+HOMEP = ((HERE / "home.html").read_text().replace("{{SHELL}}", (HERE / "static/cc-shell.html").read_text())
+         .replace("{{HEADER}}", (HERE / "static/cc-header.html").read_text()).replace("{{APP}}", "MoneyPrinter Studio"))
+
+
 @app.get("/", response_class=HTMLResponse)
+def home(req: Request):
+    if not USERS:
+        return HTMLResponse(LOCKED, 503)
+    u = current_user(req)
+    if not u:
+        return HTMLResponse(LOGIN.replace("{{ERR}}", ""))
+    import html as _h
+    return HTMLResponse(HOMEP.replace("{{USER}}", _h.escape(u)))
+
+
+@app.get("/api/usage")
+def api_usage(req: Request):
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    day = time.strftime("%Y-%m-%d", time.gmtime())
+    return {"caps": {k: v for k, v in CAPS.items() if k != "previews"},
+            "used": {k: _usage.get((u, k, day), 0) for k in CAPS if k != "previews"}}
+
+
+@app.get("/longform", response_class=HTMLResponse)
+def longform_page(req: Request):
+    if not current_user(req):
+        return RedirectResponse("/", 303)
+    return HTMLResponse(LONGP.replace("{{VOICES}}", voice_opts()).replace("{{USER}}", current_user(req)))
+
+
+@app.get("/shorts", response_class=HTMLResponse)
 def index(req: Request):
     if not USERS:
         return HTMLResponse(LOCKED, 503)
@@ -419,16 +493,21 @@ def login(req: Request, username: str = Form(...), password: str = Form(...), re
     now = time.time()
     f = [t for t in _fails.get(ip, []) if now - t < 900]
     if len(f) >= 8:
-        return HTMLResponse(LOGIN.replace("{{ERR}}", "Too many attempts. Wait 15 minutes."), 429)
+        return HTMLResponse(LOGIN.replace("{{ERR}}", "Too many tries. For safety, sign-in is paused for 15 minutes on this connection. Please try again later."), 429)
     p = USERS.get(username.strip()[:40])
     if not p or not hmac.compare_digest(p.encode(), password[:200].encode()):
         _fails[ip] = f + [now]
         time.sleep(1)
-        return HTMLResponse(LOGIN.replace("{{ERR}}", "Wrong username or password."), 401)
+        return HTMLResponse(LOGIN.replace("{{ERR}}", "That username and password don\u2019t match. Check for typos or Caps Lock and try again."), 401)
     _fails.pop(ip, None)
     r = RedirectResponse("/", 303)
     set_session(r, username.strip(), bool(remember))
     return r
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(req: Request):
+    return RedirectResponse("/", 303) if current_user(req) else HTMLResponse(LOGIN.replace("{{ERR}}", ""))
 
 
 @app.get("/logout")
@@ -484,7 +563,7 @@ def make_params(b):
     loc = [p for p in (b.get("_local") or []) if isinstance(p, str)]
     if loc:  # scene editor: user-ordered clips/images, one per scene, Ken Burns on images
         words = max(len(script.split()), 1)
-        clip = max(2, min(10, round(words / 2.4 / len(loc))))
+        clip = int(b["_clipmax"]) if b.get("_clipmax") else max(2, min(10, round(words / 2.4 / len(loc))))
         sp = dict(sp, video_source="local", video_concat_mode="sequential", video_clip_duration=clip,
                   video_materials=[MaterialInfo(provider="local", url=p) for p in loc])
     return VideoParams(
@@ -647,7 +726,10 @@ async def api_long(req: Request):
         return JSONResponse({"error": "Long Script Mode needs at least ~150 words. Use the normal mode for short videos."}, 400)
     parts = lf.split_parts(script)
     if b.get("dry"):
-        return {"parts": [{"words": len(p.split()), "start": p[:90]} for p in parts], "minutes": round(words / lf.WPM, 1)}
+        out = {"parts": [{"words": len(p.split()), "start": p[:90]} for p in parts], "minutes": round(words / lf.WPM, 1)}
+        if b.get("meta"):
+            out["meta"] = await run_in_threadpool(lf.meta, clean_text(b.get("title"), 90) or script[:60], parts)
+        return out
     if any(v.get("user") == user and v.get("kind") == "long" and v["status"] in ("queued", "running") for v in jobs.values()):
         return JSONResponse({"error": "You already have a long video rendering. Let it finish first."}, 429)
     voice = b.get("voice") if b.get("voice") in VOICES.values() else VOICES["Ezinne — Nigerian, female"]
@@ -660,6 +742,12 @@ async def api_long(req: Request):
     title = clean_text(b.get("title"), 90) or script[:60]
     st = clean_body({k: v for k, v in b.items() if k not in ("script", "parts", "done", "meta", "used", "scenes", "_local")}, 300)
     st.update(_voice=voice, _secs=180, aspect="16:9" if b.get("aspect", "16:9") == "16:9" else "9:16", parts=parts)
+    secs_in = b.get("sections") if isinstance(b.get("sections"), list) else []
+    if len(secs_in) == len(parts) and b.get("yt_title"):
+        st["meta"] = {"sections": [clean_text(x, 60) or f"Part {i + 1}" for i, x in enumerate(secs_in)],
+                      "title": clean_text(b.get("yt_title"), 100), "description": clean_text(b.get("yt_desc"), 1500)}
+    for k in ("sections", "yt_title", "yt_desc"):
+        st.pop(k, None)
     lid = str(uuid.uuid4())
     jobs[lid] = dict(status="queued", kind="long", user=user, req=st, created=time.time(), title=title, aspect=st["aspect"],
                      part=f"{len(parts)} parts queued", voice=next((k.split(" —")[0] for k, v in VOICES.items() if v == voice), ""))
@@ -707,10 +795,11 @@ def video(jid: str, req: Request, dl: int = 0):
     fn = f"moneyprinter-{jid[:8]}.mp4" if dl else None
     if Path(j["video"]).exists():
         return FileResponse(j["video"], media_type="video/mp4", filename=fn)
-    if j.get("drive") and gd.enabled():  # stream from Drive (supports seeking via Range)
+    acct = gd.account_by_key((j.get("drive") or {}).get("acct")) if j.get("drive") else None
+    if acct is not None:  # stream from the owner's Drive (supports seeking via Range)
         from fastapi.responses import StreamingResponse
         try:
-            r = gd.open_media(j["drive"]["id"], req.headers.get("range"))
+            r = acct.open_media(j["drive"]["id"], req.headers.get("range"))
         except Exception:
             return JSONResponse({"error": "Drive unavailable"}, 502)
         h = {k: r.headers[k] for k in ("Content-Length", "Content-Range") if r.headers.get(k)}
@@ -729,47 +818,118 @@ def video(jid: str, req: Request, dl: int = 0):
 @app.get("/thumb/{jid}")
 def thumb(jid: str, req: Request):
     j = jobs.get(jid)
-    if not j or current_user(req) != j.get("user") or not (j.get("drive") or {}).get("thumb") or not gd.enabled():
+    acct = gd.account_by_key((j.get("drive") or {}).get("acct")) if j and j.get("drive") else None
+    if not j or current_user(req) != j.get("user") or not (j.get("drive") or {}).get("thumb") or acct is None:
         return JSONResponse({"error": "not found"}, 404)
-    with gd.open_media(j["drive"]["thumb"]) as r:
+    with acct.open_media(j["drive"]["thumb"]) as r:
         return HTMLResponse(r.read(), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
 
 ADMINS = {u.strip() for u in os.environ.get("ADMIN_USERS", "miracle").split(",") if u.strip()}
 
 
+def _drive_state(u):
+    if gd.user_connected(u):
+        return {"mode": "own", "email": gd.user_email(u), "folder": gd.folder_name()}
+    if gd.enabled():
+        return {"mode": "admin", "folder": gd.folder_name() + "/users/" + u}
+    return {"mode": "local"}
+
+
+@app.get("/api/drive")
+def api_drive(req: Request):
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    d = _drive_state(u)  # never includes tokens
+    d["can_connect"] = gd.configured()
+    return d
+
+
+ACCOUNTP = ((HERE / "account.html").read_text().replace("{{SHELL}}", (HERE / "static/cc-shell.html").read_text())
+            .replace("{{HEADER}}", (HERE / "static/cc-header.html").read_text()).replace("{{APP}}", "MoneyPrinter Studio"))
+
+
+@app.get("/account", response_class=HTMLResponse)
+def account_page(req: Request, msg: str = ""):
+    u = current_user(req)
+    if not u:
+        return RedirectResponse("/login", 303)
+    import html as _h
+    r = HTMLResponse(ACCOUNTP.replace("{{USER}}", _h.escape(u)).replace("{{MSG}}", _h.escape(msg)).replace(
+        "{{ADMIN}}", '<a class="btn ghost" href="/admin/drive">Admin Drive (fallback storage)</a>' if u in ADMINS else ""))
+    r.headers["Cache-Control"] = "no-store"
+    return r
+
+
+@app.post("/api/drive/disconnect")
+def drive_disconnect(req: Request):
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    try:
+        ok = gd.disconnect_user(u)
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"error": "Could not disconnect: " + redact(e)[:80]}, 502)
+    return {"ok": ok, **_drive_state(u)}
+
+
 @app.get("/admin/drive", response_class=HTMLResponse)
 def admin_drive(req: Request, saved: str = ""):
     if current_user(req) not in ADMINS:
         return HTMLResponse("Not allowed", 403)
-    st = ("✅ Connected — finished videos, thumbnails and History are saved to Drive folder “" + gd.folder_name() + "”." if gd.enabled()
+    st = ("✅ Admin Drive connected — users who have not connected their own Drive are saved to “" + gd.folder_name() + "/users/&lt;name&gt;”, and the encrypted token vault lives here." if gd.enabled()
           else "⚪ Not connected." if gd.configured() else
           "⚪ Disabled: set GDRIVE_CLIENT_ID and GDRIVE_CLIENT_SECRET on Render first (see setup steps).")
-    btn = '<p><a href="/oauth/google/start" style="background:#a855f7;color:#fff;padding:10px 16px;border-radius:10px;text-decoration:none">Connect Google Drive</a></p>' if gd.configured() else ""
+    btn = '<p><a href="/oauth/google/start?mode=admin" style="background:#a855f7;color:#fff;padding:10px 16px;border-radius:10px;text-decoration:none">Connect admin Google Drive</a></p>' if gd.configured() else ""
     return HTMLResponse(f"""<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><body style="font-family:sans-serif;background:#0b0a1a;color:#e9e6ff;max-width:640px;margin:40px auto;padding:0 16px">
-<h2>Google Drive storage</h2><p>{st}</p>{saved and '<p>'+saved+'</p>'}{btn}<p style="color:#9c97c0;font-size:13px">Scope: drive.file (the app can only see files it created). Redirect URI: {gd.redirect_uri()}</p><p><a href="/" style="color:#a855f7">← Back</a></p>""")
+<h2>Admin Google Drive (fallback storage)</h2><p>{st}</p><p>Connected user Drives: {len(gd._users)}</p>{saved and '<p>'+saved+'</p>'}{btn}<p style="color:#9c97c0;font-size:13px">Scope: drive.file (the app can only see files it created). Redirect URI: {gd.redirect_uri()}</p><p><a href="/account" style="color:#a855f7">← Account</a></p>""")
 
 
 @app.get("/oauth/google/start")
-def oauth_start(req: Request):
-    if current_user(req) not in ADMINS or not gd.configured():
-        return HTMLResponse("Not allowed", 403)
+def oauth_start(req: Request, mode: str = "user"):
+    u = current_user(req)
+    if not u or not gd.configured() or (mode == "admin" and u not in ADMINS):
+        return RedirectResponse("/account?msg=" + urllib.parse.quote("Google Drive is not set up on this server yet."), 303) if u else RedirectResponse("/login", 303)
     st = secrets.token_urlsafe(24)
     r = RedirectResponse(gd.auth_url(st), 303)
-    r.set_cookie("gst", st, max_age=600, httponly=True, samesite="lax", secure=os.environ.get("RENDER") is not None)
+    r.set_cookie("gst", ("a" if mode == "admin" else "u") + "." + u + "." + st, max_age=600, httponly=True, samesite="lax",
+                 secure=os.environ.get("RENDER") is not None)
     return r
 
 
 @app.get("/oauth/google/callback", response_class=HTMLResponse)
 def oauth_cb(req: Request, code: str = "", state: str = "", error: str = ""):
-    if current_user(req) not in ADMINS or not gd.configured():
+    u = current_user(req)
+    ck = req.cookies.get("gst", "").split(".", 2)
+    if not u or not gd.configured() or len(ck) != 3 or ck[1] != u:
         return HTMLResponse("Not allowed", 403)
-    if error or not code or not state or not hmac.compare_digest(state, req.cookies.get("gst", "")):
-        return admin_drive(req, saved="❌ Google sign-in was cancelled or expired. Try again.")
+    mode = "admin" if ck[0] == "a" and u in ADMINS else "user"
+
+    def back(m):
+        r = admin_drive(req, saved=m) if mode == "admin" else RedirectResponse("/account?msg=" + urllib.parse.quote(m), 303)
+        r.delete_cookie("gst"); r.headers["Cache-Control"] = "no-store"
+        return r
+    if error or not code or not state or not hmac.compare_digest(state, ck[2]):
+        return back("Google sign-in was cancelled or expired. Try again.")
     try:
-        rt = gd.exchange(code)
+        rt, at, _ = gd.exchange(code)
     except Exception as e:  # noqa: BLE001
-        return admin_drive(req, saved="❌ Token exchange failed: " + redact(e)[:100])
+        return back("Google did not accept the sign-in: " + redact(e)[:80])
+    if mode == "user":
+        if not rt:
+            return back("Google did not return a long-lived token. Remove MoneyPrinter Studio at myaccount.google.com/permissions and connect again.")
+        try:
+            gd.connect_user(u, rt, gd.whoami(at))
+        except Exception as e:  # noqa: BLE001
+            return back("Could not save the connection: " + redact(e)[:80])
+        for k, v in jobs.items():  # re-home this user's finished local videos into their own Drive
+            if v.get("user") == u and v.get("status") == "done" and not v.get("drive") and Path(v.get("video") or "").exists():
+                _up.push(k)
+        _up.history_changed({u, gd.ADMIN})
+        return back("Connected. New videos will be saved to your Google Drive.")
+    if rt:
+        gd.set_admin_refresh(rt)
     for k, v in jobs.items():
         if v.get("status") == "done" and not v.get("drive"):
             _up.push(k)
@@ -778,8 +938,7 @@ def oauth_cb(req: Request, code: str = "", state: str = "", error: str = ""):
             "<b>GDRIVE_REFRESH_TOKEN</b> (shown once, keep it private):<br><textarea readonly style='width:100%;height:70px'>"
             + (rt or "(Google did not return a new refresh token — remove the app at myaccount.google.com/permissions and connect again)")
             + "</textarea>")
-    r = admin_drive(req, saved=note); r.delete_cookie("gst"); r.headers["Cache-Control"] = "no-store"
-    return r
+    return back(note)
 
 
 FONT_DIR = ROOT / "resource" / "fonts"
