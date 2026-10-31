@@ -183,7 +183,143 @@ def drive(job, folder, cap, pace=(75, 120)):
 
 
 KEYF = Path.home() / ".flow-bridge" / "key"
+BASEF = Path.home() / ".flow-bridge" / "base"
+LOGF = Path.home() / ".flow-bridge" / "helper.log"
 LABEL = os.environ.get("FLOW_ACCOUNT", "")
+VERSION = "2026.10.31.3"
+DEFAULT_BASE = "https://moneyprinter-studio.onrender.com"
+RAW = "https://raw.githubusercontent.com/Miracledev-coder/moneyprinter-studio/main/tools/flow-bridge/flow_bridge.py"
+AGENT = "com.calmcraze.flowbridge"
+PLIST = Path.home() / "Library" / "LaunchAgents" / (AGENT + ".plist")
+WIN_STARTUP = Path(os.environ.get("APPDATA", str(Path.home()))) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "Flow Helper.vbs"
+
+
+def _wrapper():
+    w = Path.home() / ".local" / "bin" / ("flow-bridge.cmd" if os.name == "nt" else "flow-bridge")
+    return w
+
+
+def autostart(on, base=None):
+    """Run the helper in the background at login and restart it if it stops (macOS LaunchAgent / Windows Startup)."""
+    import platform
+    base = base or (BASEF.read_text().strip() if BASEF.exists() else DEFAULT_BASE)
+    STATE.mkdir(mode=0o700, exist_ok=True)
+    if platform.system() == "Darwin":
+        uid = str(os.getuid())
+        subprocess.run(["launchctl", "bootout", f"gui/{uid}/{AGENT}"], capture_output=True)
+        if not on:
+            PLIST.unlink(missing_ok=True); print("Auto-start is OFF (background helper removed)."); return True
+        PLIST.parent.mkdir(parents=True, exist_ok=True)
+        h = str(Path.home())
+        PLIST.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>{AGENT}</string>
+<key>ProgramArguments</key><array><string>{_wrapper()}</string><string>--connect</string><string>{base}</string><string>--background</string></array>
+<key>EnvironmentVariables</key><dict><key>PATH</key><string>{h}/.local/bin:{h}/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string><key>HOME</key><string>{h}</string></dict>
+<key>WorkingDirectory</key><string>{h}</string>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><true/>
+<key>ThrottleInterval</key><integer>30</integer>
+<key>ProcessType</key><string>Interactive</string>
+<key>StandardOutPath</key><string>{LOGF}</string>
+<key>StandardErrorPath</key><string>{LOGF}</string>
+</dict></plist>
+""")
+        r = subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(PLIST)], capture_output=True, text=True)
+        if r.returncode:
+            subprocess.run(["launchctl", "load", "-w", str(PLIST)], capture_output=True)
+        print(f"Auto-start is ON: the helper now runs in the background at login and restarts itself. Log: {LOGF}")
+        return True
+    if os.name == "nt":
+        cmd = STATE / "autostart.cmd"
+        if not on:
+            WIN_STARTUP.unlink(missing_ok=True); cmd.unlink(missing_ok=True)
+            subprocess.run(["taskkill", "/F", "/FI", "WINDOWTITLE eq FlowHelperBG*"], capture_output=True)
+            print("Auto-start is OFF (background helper removed)."); return True
+        cmd.write_text(f'@echo off\r\ntitle FlowHelperBG\r\n:loop\r\ncall "{_wrapper()}" --connect {base} --background >> "{LOGF}" 2>&1\r\nif exist "{cmd}" (timeout /t 30 /nobreak >nul & goto loop)\r\n')
+        WIN_STARTUP.parent.mkdir(parents=True, exist_ok=True)
+        WIN_STARTUP.write_text(f'CreateObject("WScript.Shell").Run """{cmd}""", 0, False\r\n')
+        subprocess.Popen(["wscript.exe", str(WIN_STARTUP)])
+        print(f"Auto-start is ON: the helper now runs hidden in the background at sign-in and restarts itself. Log: {LOGF}")
+        return True
+    print("Auto-start is only set up on macOS and Windows."); return False
+
+
+def autostart_state():
+    if PLIST.exists():
+        r = subprocess.run(["launchctl", "list", AGENT], capture_output=True)
+        return "on (running)" if r.returncode == 0 else "on (installed, not running)"
+    if WIN_STARTUP.exists():
+        return "on"
+    return "off"
+
+
+def unpair(why=""):
+    """Forget this computer's key and remove auto-start."""
+    if PLIST.exists() or WIN_STARTUP.exists():
+        if why:  # we may be running inside the LaunchAgent: remove the file first so launchd stops restarting us
+            PLIST.unlink(missing_ok=True); WIN_STARTUP.unlink(missing_ok=True); (STATE / "autostart.cmd").unlink(missing_ok=True)
+        autostart(False)
+    KEYF.unlink(missing_ok=True)
+    print(why or "This computer is unpaired. Pair again any time from Studio → Account → Connect my Google Flow.")
+
+
+_LOCK = []
+
+
+def _busy_exit(bg):
+    if bg:
+        return False
+    print("The helper is already running in the background on this computer, so Studio is connected. You can close this window.", flush=True)
+    sys.exit(0)
+
+
+def single_instance(bg=False):
+    """Only one connected helper per computer; a second one (e.g. the background one) waits until the first stops."""
+    STATE.mkdir(mode=0o700, exist_ok=True)
+    f = open(STATE / "helper.lock", "a+")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            while True:
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1); break
+                except OSError:
+                    _busy_exit(bg); time.sleep(15)
+        else:
+            import fcntl
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                _busy_exit(bg)
+                print("Another helper window is open; the background helper takes over when it closes.", flush=True)
+                fcntl.flock(f, fcntl.LOCK_EX)
+    except SystemExit:
+        raise
+    except Exception:
+        pass
+    _LOCK.append(f)
+
+
+def self_update():
+    """Fetch the latest helper from GitHub; if newer, replace this file and restart (keeps the key and pairing)."""
+    try:
+        with urllib.request.urlopen(urllib.request.Request(RAW + f"?v={int(time.time())}", headers={"User-Agent": "flow-bridge/" + VERSION}), timeout=30) as r:
+            src = r.read().decode()
+        m = re.search(r'^VERSION = "([^"]+)"', src, re.M)
+        me = Path(__file__).resolve()
+        v = lambda x: tuple(int(p) for p in x.split(".") if p.isdigit())
+        if not m or v(m.group(1)) <= v(VERSION) or me.parent != STATE.resolve():
+            return
+        compile(src, "flow_bridge.py", "exec")
+        tmp = me.with_suffix(".new"); tmp.write_text(src, encoding="utf-8"); os.replace(tmp, me)
+        print(f"Updated the helper to {m.group(1)}; restarting…", flush=True)
+        for f in _LOCK:
+            f.close()
+        os.execv(sys.executable, [sys.executable, str(me)] + sys.argv[1:])
+    except Exception as e:
+        print("(update check skipped:", type(e).__name__, ")", flush=True)
 
 
 def pair(base, code, label):
@@ -198,6 +334,7 @@ def pair(base, code, label):
     except urllib.error.HTTPError as e:
         sys.exit(json.loads(e.read() or b"{}").get("error") or f"Pairing failed ({e.code}).")
     KEYF.parent.mkdir(mode=0o700, exist_ok=True)
+    BASEF.write_text(base.rstrip("/"))
     KEYF.write_text(d["key"])
     try:
         KEYF.chmod(0o600)
@@ -269,16 +406,23 @@ def credits_loop():
 def ping(base, key):
     body = json.dumps({"credits": CREDITS["n"]} if CREDITS["n"] is not None else {}).encode()
     req = urllib.request.Request(base.rstrip("/") + "/api/flow/ping", data=body, method="POST",
-                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "flow-bridge/1.0",
+                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "flow-bridge/" + VERSION, "X-Flow-Version": VERSION,
                                           **({"X-Flow-Account": LABEL} if LABEL else {})})
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.loads(r.read())
 
 
-def connect(base, key, folder, use_drive, cap):
+def connect(base, key, folder, use_drive, cap, bg=False):
     """Stay online: heartbeat every 20 s, pick up new jobs (renders that chose the Flow engine) and fill them."""
     CTX.update(base=base, key=key)
-    print(f"Connected to {base}. Studio now uses Google Flow while this window stays open. (Ctrl+C to stop)")
+    single_instance(bg)
+    self_update()
+    try:
+        BASEF.parent.mkdir(mode=0o700, exist_ok=True); BASEF.write_text(base.rstrip("/"))
+    except OSError:
+        pass
+    print(f"[{time.strftime('%Y-%m-%d %H:%M')}] flow-bridge {VERSION} connected to {base}. Studio uses Google Flow while this helper runs. (Ctrl+C to stop)", flush=True)
+    last_upd = time.time()
     import threading
     threading.Thread(target=credits_loop, daemon=True).start()
     done_jobs = set()
@@ -288,14 +432,21 @@ def connect(base, key, folder, use_drive, cap):
             jobs = ping(base, key).get("jobs", [])
             bad = 0
         except urllib.error.HTTPError as e:
-            if e.code in (401, 403):  # can be transient while Studio redeploys: keep the key, retry ~10 min
-                bad = (bad or time.time())
-                if time.time() - bad > 600:
-                    sys.exit("This computer was unlinked (or paired again elsewhere). Pair again: Studio → Account → Connect my Google Flow.")
-                print(f"(Studio did not recognise this computer yet ({e.code}); it may be restarting, retrying)"); time.sleep(20); continue
-            print(f"(server said {e.code}, retrying)"); time.sleep(30); continue
+            try:
+                body = json.loads(e.read() or b"{}")
+            except Exception:
+                body = {}
+            if body.get("revoked"):  # only an explicit Unlink / pairing again elsewhere ends the pairing
+                unpair("This computer was unlinked in Studio (or paired again on another computer). Pair again: Studio → Account → Connect my Google Flow.")
+                sys.exit(0)
+            bad += 1  # never give up or delete the key on its own: Studio may be restarting/redeploying
+            wait = min(300, 20 * bad)
+            print(f"(Studio did not accept this computer right now ({e.code}); keeping the pairing, retrying in {wait}s)", flush=True); time.sleep(wait); continue
         except Exception as e:
-            print(f"(offline: {type(e).__name__}, retrying)"); time.sleep(20); continue
+            bad += 1; wait = min(300, 20 * bad)
+            print(f"(offline: {type(e).__name__}, retrying in {wait}s)", flush=True); time.sleep(wait); continue
+        if not jobs and time.time() - last_upd > 6 * 3600:
+            last_upd = time.time(); self_update()
         for job in jobs:
             if job["job"] in done_jobs:
                 continue
@@ -372,6 +523,11 @@ def main():
     ap.add_argument("--pair", nargs="?", const="ask", metavar="CODE", help="pair with the code from Studio → Account → Connect my Google Flow")
     ap.add_argument("--account", default="", help="label for the Google account signed into Flow (shown on your Account page)")
     ap.add_argument("--pair-only", action="store_true", help="pair, save the key, and exit (used by the one-click file)")
+    ap.add_argument("--autostart", choices=["on", "off"], help="run the helper in the background at login (and restart it if it stops)")
+    ap.add_argument("--status", action="store_true", help="show pairing, auto-start and connection status")
+    ap.add_argument("--unpair", action="store_true", help="forget this computer's pairing and remove auto-start")
+    ap.add_argument("--background", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--version", action="version", version=VERSION)
     ap.add_argument("--cap", type=int, default=50, help="daily cap for --drive (default 50, same as the Studio limit)")
     a = ap.parse_args()
     if a.manual:
@@ -382,6 +538,23 @@ def main():
             sys.exit("gflow-cli is missing. Re-run the installer.")
         print("A Chrome window opens. Sign in to YOUR Google account, then click 'Sign in to Flow' if asked. Close it when Flow shows your projects.")
         sys.exit(subprocess.run([g, "auth", "login", "--browser", "chrome"]).returncode)
+    if a.unpair:
+        return unpair()
+    if a.autostart:
+        if a.autostart == "on" and not KEYF.exists():
+            sys.exit("Pair first: flow-bridge --connect https://moneyprinter-studio.onrender.com --pair")
+        return autostart(a.autostart == "on", a.connect)
+    if a.status:
+        base = a.connect or (BASEF.read_text().strip() if BASEF.exists() else DEFAULT_BASE)
+        print(f"flow-bridge {VERSION}\nStudio: {base}\nPaired: {'yes' if KEYF.exists() else 'no'}\nAuto-start: {autostart_state()}")
+        if KEYF.exists():
+            try:
+                ping(base, KEYF.read_text().strip()); print("Studio connection: OK (this computer is recognised)")
+            except urllib.error.HTTPError as e:
+                print("Studio connection:", "UNLINKED, pair again" if b"revoked" in (e.read() or b"") else f"not accepted right now ({e.code}); the helper keeps retrying")
+            except Exception as e:
+                print("Studio connection: offline (", type(e).__name__, ")")
+        return
     if not a.job and not a.connect:
         ap.error("use --connect https://moneyprinter-studio.onrender.com  or  --job file.json")
     folder = Path(a.folder).expanduser(); folder.mkdir(parents=True, exist_ok=True)
@@ -391,11 +564,21 @@ def main():
         if a.pair:
             code = a.pair if a.pair != "ask" else input("Pairing code from your Account page (e.g. ABCD-2345): ").strip()
             key = pair(a.connect, code, LABEL)
+            import platform
+            if platform.system() == "Darwin" or os.name == "nt":
+                try:  # keep the connection on permanently: background helper at login, restarted if it stops
+                    autostart(True, a.connect)
+                    if not a.pair_only:
+                        print("The background helper takes over when you close this window.")
+                except Exception as e:
+                    print("(could not turn on auto-start:", type(e).__name__, "; run: flow-bridge --autostart on)")
             if a.pair_only:
                 return
         else:
-            key = a.token or (KEYF.read_text().strip() if KEYF.exists() else "") or getpass.getpass("Paste your bridge key from Studio (hidden), or re-run with --pair: ").strip()
-        return connect(a.connect, key, folder, a.drive, a.cap)
+            key = a.token or (KEYF.read_text().strip() if KEYF.exists() else "") or ("" if a.background else getpass.getpass("Paste your bridge key from Studio (hidden), or re-run with --pair: ").strip())
+        if not key:
+            sys.exit("Not paired yet: flow-bridge --connect https://moneyprinter-studio.onrender.com --pair")
+        return connect(a.connect, key, folder, a.drive, a.cap, a.background)
     job = json.loads(Path(a.job).expanduser().read_text())
     token = a.token or getpass.getpass("Paste the upload token from Studio (hidden): ").strip()
     watch(job, token, folder, a.drive, a.cap)

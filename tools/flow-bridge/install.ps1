@@ -42,5 +42,9 @@ try {
   $lnk.Arguments = "/k `"$B\flow-bridge.cmd`" --connect https://moneyprinter-studio.onrender.com --folder `"%USERPROFILE%\Videos\FlowBridge`""
   $lnk.WorkingDirectory = $HOME; $lnk.Save()
 } catch { Write-Host '!  Could not create the Desktop shortcut (not needed).' }
+if (Test-Path (Join-Path $D 'key')) {
+  Write-Host 'Already paired: turning on the background helper (starts at sign-in, restarts itself)...'
+  & "$B\flow-bridge.cmd" --autostart on
+}
 Write-Host ''
 Write-Host 'Done.' -ForegroundColor Green

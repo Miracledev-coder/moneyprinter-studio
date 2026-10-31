@@ -24,5 +24,11 @@ if [ "$(uname)" = Darwin ]; then
   curl -fsSL "$RAW/Start%20Flow%20Helper.command" -o "$HOME/Desktop/Start Flow Helper.command" && chmod +x "$HOME/Desktop/Start Flow Helper.command"
   xattr -d com.apple.quarantine "$HOME/Desktop/Start Flow Helper.command" 2>/dev/null || true
 fi
+if [ "$(uname)" = Darwin ] && [ -s "$D/key" ]; then
+  echo "Already paired: turning on the background helper (starts at login, restarts itself)…"
+  pkill -f "flow_bridge.py --connect" 2>/dev/null || true
+  "$B/flow-bridge" --autostart on || true
+  echo; echo "Done. Studio stays connected while this Mac is on; no Terminal window needed. Check any time: flow-bridge --status"; exit 0
+fi
 echo
 echo "Done. Next: double-click 'Start Flow Helper' on your Desktop (or run: flow-bridge --connect https://moneyprinter-studio.onrender.com --pair)."

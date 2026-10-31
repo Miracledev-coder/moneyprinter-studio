@@ -1480,6 +1480,7 @@ def flow_status(req: Request):
     seen = _FLOW_SEEN.get(u) or m.get("seen") or 0
     return {"connected": u in _keys(), "online": flow_online(u), "last_seen": seen or None,
             "label": m.get("label", ""), "device": m.get("device", ""), "paired": m.get("paired"),
+            "version": _FLOW_VER.get(u, ""),
             "stage": (_PSTAGE.get(u) or ("", 0))[0] if time.time() - (_PSTAGE.get(u) or ("", 0))[1] < 1800 else ""}
 
 
@@ -1767,6 +1768,35 @@ def _keys_save(k):
         threading.Thread(target=lambda: _try(lambda: gd.admin().put_json("flow_keys.json", k)), daemon=True).start()
 
 
+def _revoked():
+    """Explicit Unlink / re-pair revocations ({"hashes": [...], "users": {user: time}}). Pairings never expire on their own;
+    only these end them. Mirrored to the studio Drive so they survive the free plan's disk wipe on redeploy."""
+    try:
+        return _json.loads((FLOW_DIR / "revoked.json").read_text())
+    except Exception:
+        r = {}
+        try:
+            r = (gd.admin().get_json("flow_revoked.json") or {}) if gd.enabled() else {}
+        except Exception:
+            pass
+        r = {"hashes": list(r.get("hashes") or [])[-500:], "users": dict(r.get("users") or {})}
+        FLOW_DIR.mkdir(parents=True, exist_ok=True); (FLOW_DIR / "revoked.json").write_text(_json.dumps(r))
+        return r
+
+
+def _revoke(h=None, user=None, unuser=None):
+    r = _revoked()
+    if h and h not in r["hashes"]:
+        r["hashes"] = (r["hashes"] + [h])[-500:]
+    if user:
+        r["users"][user] = time.time()
+    if unuser:
+        r["users"].pop(unuser, None)
+    FLOW_DIR.mkdir(parents=True, exist_ok=True); (FLOW_DIR / "revoked.json").write_text(_json.dumps(r))
+    if gd.enabled():
+        threading.Thread(target=lambda: _try(lambda: gd.admin().put_json("flow_revoked.json", r)), daemon=True).start()
+
+
 def _try(f):
     try:
         f()
@@ -1937,11 +1967,33 @@ def _bridge_user(req):
                 hit = next((u for u, h in k.items() if hmac.compare_digest(h, th)), None)
         except Exception:
             pass
+    rv = _revoked()
+    if hit is not None and th in rv["hashes"]:
+        hit = None
     if hit is None and (su := _signed_user(tok)):
         k = _keys()
-        if su not in k:  # keys.json was wiped (deploy/restart): adopt this validly signed key again
+        if th in rv["hashes"] or su in rv["users"] or su in k:
+            # unlinked, or paired again (a newer key is current): tell the helper it is revoked so it stops for good
+            try:
+                req.state.flow_revoked = True
+            except Exception:
+                pass
+        else:  # keys.json was wiped (deploy/restart): adopt this validly signed key again
             k[su] = th; _keys_save(k); hit = su
+    if hit:
+        v = re.sub(r"[^0-9.]", "", req.headers.get("x-flow-version") or "")[:20]
+        if v and _FLOW_VER.get(hit) != v:
+            _FLOW_VER[hit] = v
     return hit
+
+
+_FLOW_VER = {}
+
+
+def _bad_key(req):
+    if getattr(req.state, "flow_revoked", False):
+        return JSONResponse({"error": "This computer was unlinked or paired again elsewhere.", "revoked": True}, 401)
+    return JSONResponse({"error": "bad bridge key"}, 403)
 
 
 @app.post("/api/flow/key")
@@ -1951,7 +2003,11 @@ async def flow_key(req: Request):
     if not u:
         return JSONResponse({"error": "not logged in"}, 401)
     key = _signed_key(u)
-    k = _keys(); k[u] = hashlib.sha256(key.encode()).hexdigest(); _keys_save(k)
+    k = _keys()
+    if k.get(u):
+        _revoke(h=k[u])
+    _revoke(unuser=u)
+    k[u] = hashlib.sha256(key.encode()).hexdigest(); _keys_save(k)
     _fmeta(u, paired=time.time(), label=_fmeta(u).get("label", ""), via="key")
     return {"key": key, "install": "curl -fsSL https://raw.githubusercontent.com/Miracledev-coder/moneyprinter-studio/main/tools/flow-bridge/install.sh | sh",
             "run": "flow-bridge --connect " + str(req.base_url).rstrip("/").replace("http://moneyprinter", "https://moneyprinter")}
@@ -2007,7 +2063,11 @@ async def flow_claim(req: Request):
         return JSONResponse({"error": "That code is wrong or expired. Make a new one on the Account page."}, 403)
     u = hit[0]
     key = _signed_key(u)
-    k = _keys(); k[u] = hashlib.sha256(key.encode()).hexdigest(); _keys_save(k)  # replaces any older helper for this user
+    k = _keys()
+    if k.get(u):
+        _revoke(h=k[u])
+    _revoke(unuser=u)
+    k[u] = hashlib.sha256(key.encode()).hexdigest(); _keys_save(k)  # replaces (revokes) any older helper for this user
     _fmeta(u, paired=now, label=clean_text(b.get("label"), 80), device=clean_text(b.get("device"), 60), via="code")
     return {"key": key, "user": u}
 
@@ -2018,8 +2078,9 @@ def flow_unlink(req: Request):
     u = current_user(req)
     if not u:
         return JSONResponse({"error": "not logged in"}, 401)
-    k = _keys(); k.pop(u, None); _keys_save(k)
-    _FLOW_SEEN.pop(u, None); _fmeta(u, _drop=True)
+    k = _keys(); old = k.pop(u, None); _keys_save(k)
+    _revoke(h=old, user=u)  # durable: the helper is told 'revoked' and removes its key + auto-start, even after a redeploy
+    _FLOW_SEEN.pop(u, None); _FLOW_VER.pop(u, None); _fmeta(u, _drop=True)
     return {"ok": True}
 
 
@@ -2045,7 +2106,7 @@ async def flow_ping(req: Request):
     """Mac helper heartbeat + work queue: returns open jobs (auto renders and Send-to-Flow jobs) that still need clips."""
     u = _bridge_user(req)
     if not u:
-        return JSONResponse({"error": "bad bridge key"}, 403)
+        return _bad_key(req)
     _online(u)
     try:
         cr = (await req.json()).get("credits")
