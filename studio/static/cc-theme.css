@@ -123,3 +123,13 @@ body.has-stbar{padding-bottom:76px}
 .st-pcards{width:100%}
 .st-card #sp_vhook_l{flex-wrap:wrap}
 body.has-stbar{padding-bottom:70px}
+/* horizontal step wizard: tabs across the top, one step at a time */
+.st-tabs{display:flex;gap:8px;max-width:1100px;margin:18px auto 0;overflow-x:auto;position:sticky;top:0;z-index:6;background:#0b0a1a;padding:8px 0}
+.st-tabs a{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;padding:10px 14px;border-radius:12px;background:#17143a;border:1px solid #2a2550;color:#c9c4ea;text-decoration:none;font-size:13px;font-weight:600}
+.st-tabs a i{font-style:normal;width:22px;height:22px;border-radius:7px;display:grid;place-items:center;font-size:12px;background:#26224a;color:#fff}
+.st-tabs a.on{background:linear-gradient(90deg,#e8364a,#a855f7);border-color:transparent;color:#fff}.st-tabs a.on i{background:#0004}.st-tabs a.dn{border-color:#a855f7;color:#fff}.st-tabs a.dn i{background:#a855f7}
+.st-wrap.st-wiz{display:block;margin-top:10px}.st-wiz>.st-card{display:none}.st-wiz>.st-card.st-on{display:block}
+.st-wnav{display:flex;justify-content:space-between;margin-top:16px}.st-wnav button{padding:10px 18px;border-radius:10px;font-size:14px;cursor:pointer;border:1px solid #39345f;background:#1c1936;color:#f4efe6}
+.st-wnav .st-next{background:linear-gradient(90deg,#e8364a,#a855f7);border:0;font-weight:700;color:#fff}
+.lf .stepnav.st-tabs{flex-wrap:nowrap}
+.st-wiz .screen{max-width:640px;margin:0 auto}

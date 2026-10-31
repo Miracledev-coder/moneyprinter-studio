@@ -38,7 +38,7 @@ function shorts(){const main=g('create');if(!main||!g('go'))return;const prompt=
  grid.after(g('msg'));const goB=g('go');goB.classList.add('st-hidden');B[4].appendChild(goB);
  [...prompt.querySelectorAll('.cc-chip,.cc-bar,.cc-field,details')].length||0;prompt.querySelectorAll('.cc-bar,details.cc-adv').forEach(d=>{if(!d.querySelector('select,input,textarea,button'))d.remove()});
  if(!prompt.querySelector('select,input,textarea,button,details'))prompt.remove();else{prompt.classList.add('st-leftover');B[4].appendChild(prompt)}
- tips(grid);bar('go',()=>{const l=g('length');return l?l.options[l.selectedIndex].text:''})}
+ wizard(grid,c,null);tips(grid);bar('go',()=>{const l=g('length');return l?l.options[l.selectedIndex].text:''})}
 function longf(){const main=g('cc-long');if(!main||!g('lgo'))return;const S=i=>g('s'+i);const nav=main.querySelector('.stepnav');
  const grid=document.createElement('div');grid.className='st-wrap';S(1).before(grid);
  const c=[card(1,'Script','Paste the full narration. Blank lines between paragraphs help the chapter split.'),card(2,'Visuals','Google Flow AI (director picks image or video per shot) or stock footage.'),card(3,'Voice & music'),card(4,'Subtitles','Live preview updates as you change settings.'),card(5,'Brand & output','Plan chapters, name them, then render.')];
@@ -52,6 +52,12 @@ function longf(){const main=g('cc-long');if(!main||!g('lgo'))return;const S=i=>g
  const h=S(5).querySelector('h2 button');put(B[4],[h,...kids(S(5)),goB,gm]);goB.classList.add('st-hidden');
  [1,2,3,4,5,6].forEach(i=>S(i)&&S(i).remove());c.forEach((x,i)=>x.id='s'+(i+1));
  if(nav)nav.innerHTML=['Script','Visuals','Voice & music','Subtitles','Brand & output'].map((t,i)=>`<a href="#s${i+1}">${i+1} ${t}</a>`).join('');
- tips(grid);bar('lgo',()=>{const t=(g('lstat')||{}).textContent||'';const m=t.match(/≈[\d.]+ min/);return m?m[0]:''})}
+ wizard(grid,c,nav);tips(grid);bar('lgo',()=>{const t=(g('lstat')||{}).textContent||'';const m=t.match(/≈[\d.]+ min/);return m?m[0]:''})}
+function wizard(grid,c,nav){const names=c.map(x=>x.querySelector('h2').childNodes[1].textContent.trim());
+ if(!nav){nav=document.createElement('nav');grid.before(nav)}nav.className='st-tabs';nav.innerHTML=names.map((t,i)=>`<a href="#${c[i].id}"><i>${i+1}</i>${t}</a>`).join('');grid.classList.add('st-wiz');
+ const T=[...nav.children];let k=0;const go=i=>{k=Math.max(0,Math.min(c.length-1,i));c.forEach((x,j)=>x.classList.toggle('st-on',j==k));T.forEach((t,j)=>{t.classList.toggle('on',j==k);t.classList.toggle('dn',j<k)});if(nav.getBoundingClientRect().top<0)nav.scrollIntoView({block:'start'})};
+ c.forEach((x,j)=>{const w=document.createElement('div');w.className='st-wnav';w.innerHTML=(j?'<button type=button class=st-back>← Back</button>':'<span></span>')+(j<c.length-1?`<button type=button class=st-next>Next: ${names[j+1]} →</button>`:'');x.appendChild(w);
+  w.querySelectorAll('button').forEach(b=>b.onclick=()=>go(b.classList.contains('st-next')?j+1:j-1))});
+ T.forEach((t,j)=>t.onclick=e=>{e.preventDefault();go(j)});go(Math.max(0,c.findIndex(x=>'#'+x.id==location.hash)))}
 const run=()=>{try{shorts();longf()}catch(e){console.error('cc-steps',e)}};
 if(document.readyState=='complete')setTimeout(run,0);else addEventListener('load',()=>setTimeout(run,0))})();
