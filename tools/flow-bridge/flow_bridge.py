@@ -266,13 +266,17 @@ def connect(base, key, folder, use_drive, cap):
     import threading
     threading.Thread(target=credits_loop, daemon=True).start()
     done_jobs = set()
+    bad = 0
     while True:
         try:
             jobs = ping(base, key).get("jobs", [])
+            bad = 0
         except urllib.error.HTTPError as e:
-            if e.code == 403:
-                KEYF.unlink(missing_ok=True)
-                sys.exit("This computer was unlinked (or paired again elsewhere). Pair again: Studio → Account → Connect my Google Flow.")
+            if e.code in (401, 403):  # can be transient while Studio redeploys: keep the key, retry ~10 min
+                bad = (bad or time.time())
+                if time.time() - bad > 600:
+                    sys.exit("This computer was unlinked (or paired again elsewhere). Pair again: Studio → Account → Connect my Google Flow.")
+                print(f"(Studio did not recognise this computer yet ({e.code}); it may be restarting, retrying)"); time.sleep(20); continue
             print(f"(server said {e.code}, retrying)"); time.sleep(30); continue
         except Exception as e:
             print(f"(offline: {type(e).__name__}, retrying)"); time.sleep(20); continue

@@ -1645,6 +1645,9 @@ def _model(kind, vm=None, adv=None):
     return TIERS.get(vm) or aiv.MODELS["video"]  # lite | fast | quality | omni (Omni Flash, up to 10 s, 7 refs)
 
 
+_KEYS_RELOAD = [0.0]
+
+
 def _keys():
     try:
         return _json.loads((FLOW_DIR / "keys.json").read_text())
@@ -1802,7 +1805,20 @@ def _bridge_user(req):
     if not tok:
         return None
     th = hashlib.sha256(tok.encode()).hexdigest()
-    return next((u for u, h in _keys().items() if hmac.compare_digest(h, th)), None)
+    hit = next((u for u, h in _keys().items() if hmac.compare_digest(h, th)), None)
+    if hit is None and time.time() - _KEYS_RELOAD[0] > 20:
+        # Render deploys overlap: a helper paired on the old instance after this one cached keys.json.
+        # Re-read the durable Drive copy (merged, never dropping local pairings) before rejecting the key.
+        _KEYS_RELOAD[0] = time.time()
+        try:
+            d = (gd.admin().get_json("flow_keys.json") or {}) if gd.enabled() else {}
+            if d:
+                k = _keys(); k.update({u: h for u, h in d.items() if u not in k or hmac.compare_digest(h, th)})
+                FLOW_DIR.mkdir(parents=True, exist_ok=True); (FLOW_DIR / "keys.json").write_text(_json.dumps(k))
+                hit = next((u for u, h in k.items() if hmac.compare_digest(h, th)), None)
+        except Exception:
+            pass
+    return hit
 
 
 @app.post("/api/flow/key")
