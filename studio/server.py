@@ -2494,6 +2494,219 @@ def _music_from_drive(u, name):
     return ""
 
 
+# ---------------- Story studio (/story) ----------------
+import story as STY  # noqa: E402
+STORYP = ((HERE / "story.html").read_text().replace("{{SHELL}}", (HERE / "static/cc-shell.html").read_text())
+          .replace("{{HEADER}}", (HERE / "static/cc-header.html").read_text()).replace("{{APP}}", "MoneyPrinter Studio"))
+
+
+@app.get("/story", response_class=HTMLResponse)
+def story_page(req: Request):
+    u = current_user(req)
+    if not u:
+        return RedirectResponse("/", 303)
+    import html as _h
+    return HTMLResponse(STORYP.replace("{{USER}}", _h.escape(u)).replace("{{ADMIN}}", "1" if is_admin(u) else "0"))
+
+
+async def _story_call(req, fn, cost=True):
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    b = clean_body(await req.json(), 60000)
+    if not isinstance(b, dict):
+        return JSONResponse({"error": "Bad request."}, 400)
+    if cost and not use(u, "ai"):
+        return JSONResponse({"error": f"Daily AI limit reached ({CAPS['ai']} requests). Try again tomorrow."}, 429)
+    try:
+        return await run_in_threadpool(fn, u, b)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, 400)
+    except Exception as e:
+        return JSONResponse({"error": "That didn't work: " + redact(str(e))[:140]}, 502)
+
+
+def _secs(b):
+    return int(num(b.get("seconds"), 60, 15, 1500, int))
+
+
+@app.post("/api/story/source")
+async def story_source(req: Request):
+    def f(u, b):
+        t, src = STY.transcript(clean_text(b.get("url"), 300))
+        return {"text": t, "source": src, "words": len(t.split())}
+    return await _story_call(req, f)
+
+
+@app.post("/api/story/ideas")
+async def story_ideas(req: Request):
+    return await _story_call(req, lambda u, b: {"ideas": STY.ideas(clean_text(b.get("topic"), 200))})
+
+
+@app.post("/api/story/script")
+async def story_script(req: Request):
+    def f(u, b):
+        src = clean_text(b.get("source"), 40000)
+        idea = b.get("idea") if isinstance(b.get("idea"), dict) else None
+        if not src and not idea:
+            raise ValueError("Paste a YouTube link or pick a story idea first.")
+        import aivisuals as aiv
+        return STY.script(_secs(b), src, idea, clean_text(b.get("notes"), 600), aiv.STYLE_NAMES.get(aiv_norm(b.get("style")), ""))
+    return await _story_call(req, f)
+
+
+@app.post("/api/story/cast")
+async def story_cast(req: Request):
+    """Extract the characters and save them into the user's saved Characters (matched by name)."""
+    def f(u, b):
+        text = clean_text(b.get("script"), 40000)
+        if len(text.split()) < 20:
+            raise ValueError("Write the script first.")
+        style = b.get("style") if b.get("style") in ("realistic", "pixar", "stick") else "realistic"
+        have = {c["name"].lower(): c for c in CHL.load(u)}
+        out = []
+        for c in STY.cast(text, style):
+            old = have.get(str(c["name"]).lower())
+            out.append(CHL.upsert(u, {"id": old["id"] if old else "", "name": c["name"], "look": c.get("look", ""), "style": style,
+                                      "main": not out}, clean_text) | {"role": clean_text(c.get("role"), 80)})
+        return {"characters": out}
+    return await _story_call(req, f)
+
+
+@app.post("/api/story/scenes")
+async def story_scenes(req: Request):
+    def f(u, b):
+        import aivisuals as aiv
+        text = clean_text(b.get("script"), 40000)
+        if len(text.split()) < 20:
+            raise ValueError("Write the script first.")
+        ids = b.get("characters") if isinstance(b.get("characters"), list) else None
+        chars = [c for c in CHL.load(u) if ids is None or c["id"] in ids]
+        aspect = "9:16" if b.get("aspect") == "9:16" else "16:9"
+        return {"scenes": STY.scenes(text, chars, aiv.STYLES[aiv_norm(b.get("style"))], _secs(b), aspect)}
+    return await _story_call(req, f)
+
+
+@app.post("/api/story/flow")
+async def story_flow(req: Request):
+    """Bulk images through the user's Google Flow helper (Nano Banana Pro, one batch). kind=refs makes character sheets."""
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    b = clean_body(await req.json(), 80000)
+    if not flow_online(u):
+        return JSONResponse({"error": "Your Google Flow helper is offline.", "offline": True}, 409)
+    import aivisuals as aiv
+    chars = {c["id"]: c for c in CHL.load(u)}
+    if b.get("kind") == "refs":
+        cs = [chars[i] for i in (b.get("characters") or []) if i in chars][:8]
+        if not cs:
+            return JSONResponse({"error": "No characters to draw."}, 400)
+        texts, prompts, per, refs = [c["name"] for c in cs], [CHL.portrait_prompt(c) for c in cs], [[] for _ in cs], [[] for _ in cs]
+        aspect, extra = "9:16", {"story_refs": [c["id"] for c in cs]}
+    else:
+        sc = [s for s in (b.get("scenes") or []) if isinstance(s, dict) and s.get("prompt")][:40]
+        if not sc:
+            return JSONResponse({"error": "Plan the scenes first."}, 400)
+        byname = {c["name"].lower(): c for c in chars.values()}
+        texts = [clean_text(s.get("text"), 400) or clean_text(s["prompt"], 400) for s in sc]
+        prompts = [clean_text(s["prompt"], 1800) for s in sc]
+        per = [[n for n in (s.get("characters") or []) if str(n).lower() in byname][:3] for s in sc]
+        refs = [[r for n in p for r in byname[str(n).lower()].get("refs", [])[-1:]] for p in per]
+        aspect, extra = ("9:16" if b.get("aspect") == "9:16" else "16:9"), {"story_idx": [int(num(s.get("n"), i, 0, 99, int)) for i, s in enumerate(sc)]}
+    if not use(u, "ai"):
+        return JSONResponse({"error": f"Daily AI limit reached ({CAPS['ai']} requests)."}, 429)
+    model = ITIERS.get(_prefs(u).get("image_model", "pro"), aiv.MODELS["image"])
+    j = {"id": uuid.uuid4().hex, "user": u, "th": hashlib.sha256(secrets.token_urlsafe(24).encode()).hexdigest(), "created": time.time(),
+         "aspect": aspect, "duration": 8, "style": aiv_norm(b.get("style")), "texts": texts, "prompts": prompts,
+         "meta": {"chars": per, "char_refs": refs}, "filled": [None] * len(texts), "kinds": ["image"] * len(texts),
+         "models": [model] * len(texts), "story": True, **extra}
+    _fsave(j)
+    return {"id": j["id"], "scenes": len(texts), "model": model, "credits": 0}
+
+
+@app.get("/api/story/flow/{fid}")
+def story_flow_get(fid: str, req: Request):
+    j = _fown(req, re.sub(r"[^a-f0-9]", "", fid))
+    if not j or not j.get("story"):
+        return JSONResponse({"error": "not found"}, 404)
+    u = j["user"]
+    if j.get("story_refs"):  # attach finished character sheets to the saved characters (once)
+        done = set(j.get("attached") or [])
+        for i, up in enumerate(j["filled"]):
+            if up and i not in done:
+                p = scn.upload_path(u, up["id"])
+                try:
+                    if p:
+                        CHL.add_ref(u, j["story_refs"][i], p.read_bytes())
+                except Exception:
+                    pass
+                done.add(i)
+        if done != set(j.get("attached") or []):
+            j = _fload(j["id"]); j["attached"] = sorted(done); _fsave(j)
+    n = sum(1 for x in j["filled"] if x)
+    return {"filled": [x and {"id": x["id"]} for x in j["filled"]], "done": n, "total": len(j["filled"]), "closed": bool(j.get("closed")),
+            "online": flow_online(u), "idx": j.get("story_idx"), "refs": j.get("story_refs"), "helper": (_HSTAT.get(u) or ("", "", 0))[1]}
+
+
+@app.post("/api/story/flow/{fid}/stop")
+def story_flow_stop(fid: str, req: Request):
+    j = _fown(req, re.sub(r"[^a-f0-9]", "", fid))
+    if not j or not j.get("story"):
+        return JSONResponse({"error": "not found"}, 404)
+    j["closed"] = True; _fsave(j)
+    return {"ok": True}
+
+
+@app.post("/api/story/thumbs")
+async def story_thumbs(req: Request):
+    """2-3 YouTube thumbnail variants (1280x720, bold outlined title) from a scene image or character sheet. Local PIL, free."""
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    b = clean_body(await req.json(), 2000)
+    src = str(b.get("image") or "")
+    p = scn.upload_path(u, src) or CHL.ref_path(u, src)
+    if not p:
+        return JSONResponse({"error": "Pick a generated image (a scene or character sheet) for the thumbnail."}, 400)
+    title = clean_text(b.get("title"), 90) or "Untold story"
+    import io
+
+    def work():
+        out = []
+        for v in range(int(num(b.get("variants"), 3, 1, 3, int))):
+            f = STY.thumbnail(str(p), title, v)
+            out.append(scn.save_upload(u, "thumb.jpg", io.BytesIO(Path(f).read_bytes()))["id"]); Path(f).unlink(missing_ok=True)
+        return {"thumbs": out}
+    try:
+        return await run_in_threadpool(work)
+    except Exception as e:
+        return JSONResponse({"error": "Thumbnail failed: " + type(e).__name__}, 500)
+
+
+@app.post("/api/story/zip")
+async def story_zip(req: Request):
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    b = clean_body(await req.json(), 60000)
+    import io, zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+        for k, it in enumerate((b.get("files") or [])[:80]):
+            if not isinstance(it, dict):
+                continue
+            p = scn.upload_path(u, str(it.get("id") or "")) or CHL.ref_path(u, str(it.get("id") or ""))
+            if p:
+                nm = re.sub(r"[^A-Za-z0-9_.-]", "_", str(it.get("name") or f"{k + 1:02d}"))[:60]
+                z.write(p, nm + p.suffix)
+        if b.get("script"):
+            z.writestr("script.txt", clean_text(b.get("script"), 60000))
+        if b.get("prompts"):
+            z.writestr("scene_prompts.txt", clean_text(b.get("prompts"), 60000))
+    return Response(buf.getvalue(), media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="story.zip"'})
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), log_level="info")

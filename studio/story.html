@@ -1,0 +1,127 @@
+<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Story · MoneyPrinter Studio</title>
+<link rel=icon href="/static/favicon.svg"><meta name=theme-color content="#0b0a1a"><link rel=stylesheet href="/static/cc-theme.css"><style>
+.sy{max-width:1140px;margin:0 auto;padding:8px 22px 80px}.sy h1{font-size:30px;margin:6px 0 4px;display:flex;align-items:center;gap:10px}
+.sy .badge{font-size:11px;letter-spacing:.12em;background:linear-gradient(90deg,#f59e0b,#e8364a,#a855f7);color:#fff;padding:4px 9px;border-radius:999px;font-weight:700}
+.sy .sub{color:#a8a3c7;margin:0 0 6px;font-size:14px}.sy input,.sy textarea,.sy select{width:100%;box-sizing:border-box;background:#0b0a1a;color:#f4efe6;border:1px solid #39345f;border-radius:10px;padding:9px 11px;font:inherit;font-size:14px}
+.sy label{display:block;font-size:12px;color:#a8a3c7;margin:10px 0 5px}.sy .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}.sy .row>*{flex:1;min-width:150px}.sy .row>[style*="flex:0"]{min-width:0;flex:0 0 auto}
+.sy .btn{background:#1c1936;color:#f4efe6;border:1px solid #39345f;border-radius:10px;padding:9px 14px;cursor:pointer;font-size:13px;white-space:nowrap;flex:0 0 auto;min-width:0}.sy .btn:disabled{opacity:.5;cursor:wait}
+.sy .pri{background:linear-gradient(90deg,#e8364a,#a855f7);border:0;color:#fff;font-weight:700}.sy .msg{font-size:12px;color:#ffb74d;margin-top:8px;min-height:16px}.sy .ok{color:#7ee2a8}
+.sy .or{display:flex;align-items:center;gap:10px;color:#6f6a94;font-size:12px;margin:16px 0}.sy .or:before,.sy .or:after{content:"";flex:1;height:1px;background:#2a2550}
+.sy .ideas{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}.sy .idea{background:#0f0d24;border:1px solid #2a2550;border-radius:14px;padding:12px;cursor:pointer;font-size:13px;color:#bdb6d6}
+.sy .idea b{display:block;color:#f4efe6;font-size:14px;margin-bottom:4px}.sy .idea.on{border-color:#a855f7;box-shadow:0 0 0 2px #a855f755}.sy .idea small{color:#c08bff}
+.sy textarea#sc{min-height:340px;line-height:1.55}.sy .cast{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.sy .ch{background:#0f0d24;border:1px solid #2a2550;border-radius:14px;padding:10px;display:grid;grid-template-columns:96px 1fr;gap:10px}
+.sy .ch .im,.sy .scn .im{background:#1c1936 center/cover no-repeat;border-radius:10px;aspect-ratio:3/4;display:grid;place-items:center;color:#6f6a94;font-size:11px;text-align:center}
+.sy .ch textarea{height:70px;font-size:12px}.sy .scenes{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.sy .scn{background:#0f0d24;border:1px solid #2a2550;border-radius:14px;padding:10px;display:grid;grid-template-columns:200px 1fr;gap:10px}
+.sy .scn .im{aspect-ratio:16/9}.sy .scn.v .im{aspect-ratio:9/16;max-height:260px}.sy .scn textarea{height:96px;font-size:12px}.sy .scn small{color:#a8a3c7;font-size:11px}.sy .scn .tg{font-size:11px;color:#c08bff}
+.sy .est{background:#120f2b;border:1px dashed #a855f7;border-radius:12px;padding:10px 12px;font-size:13px;margin:10px 0;color:#e9e6ff}
+.sy .pbar{height:8px;background:#26224a;border-radius:9px;overflow:hidden;margin:8px 0}.sy .pbar div{height:100%;width:0;background:linear-gradient(90deg,#e8364a,#a855f7);transition:.4s}
+.sy .thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:10px}.sy .thumbs a{display:block}.sy .thumbs img{width:100%;border-radius:10px;aspect-ratio:16/9;object-fit:cover;border:1px solid #2a2550}
+.sy .pick{display:flex;gap:8px;overflow-x:auto;padding:4px 0}.sy .pick img{height:70px;border-radius:8px;border:2px solid transparent;cursor:pointer}.sy .pick img.on{border-color:#a855f7}
+.sy .outs{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}@media(max-width:900px){.sy .ideas,.sy .cast,.sy .scenes,.sy .thumbs{grid-template-columns:1fr}.sy .scn{grid-template-columns:1fr}}
+</style></head><body>
+<div class=cc-shell>{{SHELL}}<div>{{HEADER}}
+<main class=sy id=cc-story>
+<h1>Story <span class=badge>STORY · FLOW</span></h1>
+<p class=sub>Turn a viral story (or a fresh idea) into a retold script, a consistent cast, scene-by-scene images through your Google Flow and a click-worthy thumbnail.</p>
+<nav class=st-tabs id=tabs></nav>
+<div class="st-wrap st-wiz" id=wiz>
+<section class=st-card id=st1 data-t="Story source"><h2><i>1</i>Story source</h2>
+ <label>YouTube link of a viral story</label><div class=row><input id=yurl placeholder="https://www.youtube.com/watch?v=…"><button class="btn pri" id=bsrc>Get the story</button></div>
+ <div class=msg id=msrc></div><textarea id=srctxt style="display:none;height:140px;font-size:12px" placeholder="Transcript"></textarea>
+ <div class=or>or let AI pitch story ideas</div>
+ <div class=row><input id=topic placeholder="Optional niche or topic, e.g. family betrayal, rich vs poor, office revenge"><button class=btn id=bideas>💡 Pitch ideas</button></div>
+ <div class=ideas id=ideas></div><div class=msg id=mideas></div></section>
+<section class=st-card id=st2 data-t="Script"><h2><i>2</i>Script</h2>
+ <div class=row><div><label>Length</label><select id=len><optgroup label="Shorts"><option value=15>15 s</option><option value=30>30 s</option><option value=60 selected>60 s</option><option value=90>90 s</option><option value=120>2 min</option><option value=180>3 min</option></optgroup>
+ <optgroup label="Long-form"><option value=300>5 min</option><option value=480>8 min</option><option value=600>10 min</option><option value=720>12 min</option><option value=900>15 min</option><option value=1200>20 min</option></optgroup><option value=custom>Custom…</option></select></div>
+ <div id=cwrap style="display:none"><label>Custom minutes</label><input id=cmin type=number min=0.25 max=25 step=0.25 value=4></div>
+ <div><label>Title</label><input id=title placeholder="Story title"></div><div style="flex:0"><button class="btn pri" id=bscript>✍️ Write script</button></div></div>
+ <label>Narration (edit freely) · <span id=wc>0 words</span></label><textarea id=sc placeholder="Your story narration appears here. You can also paste or write your own."></textarea><div class=msg id=mscript></div></section>
+<section class=st-card id=st3 data-t="Cast"><h2><i>3</i>Cast</h2>
+ <div class=row><div><label>Visual style</label><select id=style><option value=realistic>Realistic</option><option value=pixar>Pixar 3D</option><option value=stick>Stick figure</option></select></div>
+ <div style="flex:0"><button class=btn id=bcast>👥 Find characters</button></div><div style="flex:0"><button class="btn pri" id=brefs>🎨 Make reference sheets</button></div></div>
+ <p class=sub style="margin-top:8px">Characters are saved to your Characters library. Each one gets a reference sheet first, which is reused in every scene to keep faces and outfits consistent.</p>
+ <div class=cast id=cast></div><div class=msg id=mcast></div></section>
+<section class=st-card id=st4 data-t="Scenes"><h2><i>4</i>Scenes</h2>
+ <div class=row><div><label>Format</label><select id=aspect><option value="16:9">16:9 YouTube</option><option value="9:16">9:16 Shorts</option></select></div><div style="flex:0"><button class="btn pri" id=bscenes>🎬 Split into scenes</button></div></div>
+ <div class=msg id=mscenes></div><div class=scenes id=scenes></div></section>
+<section class=st-card id=st5 data-t="Images"><h2><i>5</i>Images</h2>
+ <div class=est id=est>Plan the scenes first.</div>
+ <div class=row><div style="flex:0"><button class="btn pri" id=bgen>⚡ Generate all images</button></div><div style="flex:0"><button class=btn id=bstop hidden>■ Stop</button></div><div class=msg id=mgen style="flex:1"></div></div>
+ <div class=pbar><div id=pb></div></div><div class=scenes id=scenes2></div></section>
+<section class=st-card id=st6 data-t="Thumbnail & export"><h2><i>6</i>Thumbnail &amp; export</h2>
+ <label>Thumbnail title text</label><div class=row><input id=ttext placeholder="SHE KNEW ALL ALONG"><div style="flex:0"><button class="btn pri" id=bthumb>🖼 Design thumbnails</button></div></div>
+ <label>Base image (main character or a scene)</label><div class=pick id=pick></div>
+ <div class=thumbs id=thumbs></div><div class=msg id=mthumb></div>
+ <div class=outs><button class=btn id=bzip>⬇ Download all images (.zip)</button><button class=btn id=bcopy>📋 Copy script</button><button class="btn pri" id=blong>▶ Send to Long-form</button><button class="btn pri" id=bshort>📱 Send to Shorts</button></div><div class=msg id=mout></div></section>
+</div></main></div></div>
+<script>
+const ADMIN={{ADMIN}}==1,$=i=>document.getElementById(i),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const S=JSON.parse(localStorage.getItem('story_state')||'{}');S.scenes=S.scenes||[];S.cast=S.cast||[];const save=()=>localStorage.setItem('story_state',JSON.stringify(S));
+async function api(u,b,m){const r=await fetch(u,{method:m||'POST',headers:{'content-type':'application/json'},body:b?JSON.stringify(b):undefined});let d={};try{d=await r.json()}catch(e){}if(!r.ok)throw Object.assign(new Error(d.error||('HTTP '+r.status)),{d});return d}
+function busy(b,on,t){b.disabled=on;if(on){b._t=b.textContent;b.textContent=t||'Working…'}else if(b._t)b.textContent=b._t}
+const secs=()=>$('len').value=='custom'?Math.round(+$('cmin').value*60):+$('len').value;
+/* horizontal wizard: same look as cc-steps.js */
+const C=[...document.querySelectorAll('#wiz>.st-card')],T=$('tabs');T.innerHTML=C.map((c,i)=>`<a href="#${c.id}"><i>${i+1}</i>${c.dataset.t}</a>`).join('');
+let K=0;function go(i){K=Math.max(0,Math.min(C.length-1,i));C.forEach((c,j)=>c.classList.toggle('st-on',j==K));[...T.children].forEach((t,j)=>{t.classList.toggle('on',j==K);t.classList.toggle('dn',j<K)});history.replaceState(null,'','#'+C[K].id);if(K==4)drawGen();if(K==5)drawPick()}
+C.forEach((c,j)=>{const w=document.createElement('div');w.className='st-wnav';w.innerHTML=(j?'<button type=button class=st-back>← Back</button>':'<span></span>')+(j<C.length-1?`<button type=button class=st-next>Next: ${C[j+1].dataset.t} →</button>`:'');c.appendChild(w);w.querySelectorAll('button').forEach(b=>b.onclick=()=>go(b.classList.contains('st-next')?j+1:j-1))});
+[...T.children].forEach((t,j)=>t.onclick=e=>{e.preventDefault();go(j)});
+/* step 1 */
+$('bsrc').onclick=async()=>{const b=$('bsrc');busy(b,1,'Reading video…');$('msrc').textContent='';try{const d=await api('/api/story/source',{url:$('yurl').value});S.source=d.text;S.idea=null;save();$('srctxt').value=d.text;$('srctxt').style.display='block';
+ $('msrc').innerHTML=`<span class=ok>✓ Got ${d.words} words (${esc(d.source)}). Next, write the script: it is retold in fresh words, keeping the plot beats.</span>`}catch(e){$('msrc').textContent=e.message}busy(b,0)};
+$('srctxt').oninput=()=>{S.source=$('srctxt').value;save()};
+function drawIdeas(){$('ideas').innerHTML=(S.ideas||[]).map((x,i)=>`<div class="idea${S.idea&&S.idea.title==x.title?' on':''}" data-i=${i}><small>${esc(x.genre)}</small><b>${esc(x.title)}</b>${esc(x.logline)}</div>`).join('');
+ $('ideas').querySelectorAll('.idea').forEach(e=>e.onclick=()=>{S.idea=S.ideas[e.dataset.i];S.source='';$('srctxt').style.display='none';$('title').value=S.idea.title;save();drawIdeas();$('mideas').innerHTML='<span class=ok>✓ Picked. Next: Script →</span>'})}
+$('bideas').onclick=async()=>{const b=$('bideas');busy(b,1,'Pitching…');try{S.ideas=(await api('/api/story/ideas',{topic:$('topic').value})).ideas;save();drawIdeas()}catch(e){$('mideas').textContent=e.message}busy(b,0)};
+/* step 2 */
+$('len').onchange=()=>{$('cwrap').style.display=$('len').value=='custom'?'':'none';S.len=$('len').value;save()};
+const wc=()=>{const n=($('sc').value.match(/\S+/g)||[]).length;$('wc').textContent=`${n} words ≈ ${Math.round(n/2.5)} s`};
+$('sc').oninput=()=>{S.script=$('sc').value;save();wc()};$('title').oninput=()=>{S.title=$('title').value;save()};
+$('bscript').onclick=async()=>{const b=$('bscript');busy(b,1,'Writing…');$('mscript').textContent='';try{const d=await api('/api/story/script',{seconds:secs(),source:S.source||'',idea:S.idea||null,style:$('style').value});
+ S.script=d.script;S.title=$('title').value||d.title;$('sc').value=d.script;$('title').value=S.title;if(!$('ttext').value)$('ttext').value=S.title;save();wc()}catch(e){$('mscript').textContent=e.message}busy(b,0)};
+/* step 3 */
+const refUrl=c=>c.refs&&c.refs.length?'/char/'+c.refs[c.refs.length-1]+'?'+c.refs.length:'';
+function drawCast(){$('cast').innerHTML=S.cast.map((c,i)=>`<div class=ch><div class=im style="${refUrl(c)?`background-image:url(${refUrl(c)})`:''}">${refUrl(c)?'':'No sheet yet'}</div><div><b>${esc(c.name)}</b> <small style="color:#a8a3c7">${esc(c.role||'')}</small><textarea data-i=${i}>${esc(c.look)}</textarea></div></div>`).join('')||'<p class=sub>Click “Find characters”.</p>';
+ $('cast').querySelectorAll('textarea').forEach(t=>t.onchange=async()=>{const c=S.cast[t.dataset.i];c.look=t.value;save();try{await api('/api/characters',{id:c.id,name:c.name,look:c.look,style:c.style})}catch(e){}})}
+$('style').onchange=()=>{S.style=$('style').value;save()};
+$('bcast').onclick=async()=>{const b=$('bcast');busy(b,1,'Reading the story…');$('mcast').textContent='';try{S.cast=(await api('/api/story/cast',{script:$('sc').value,style:['realistic','pixar','stick'].includes($('style').value)?$('style').value:'realistic'})).characters;save();drawCast()}catch(e){$('mcast').textContent=e.message}busy(b,0)};
+async function syncCast(){try{const all=(await api('/api/characters',null,'GET')).characters;S.cast=S.cast.map(c=>Object.assign(c,all.find(x=>x.id==c.id)||{}));save();drawCast()}catch(e){}}
+$('brefs').onclick=async()=>{const b=$('brefs');if(!S.cast.length){$('mcast').textContent='Find the characters first.';return}busy(b,1,'Drawing sheets…');
+ try{const d=await api('/api/story/flow',{kind:'refs',characters:S.cast.map(c=>c.id),style:$('style').value});$('mcast').innerHTML=`<span class=ok>Sent ${d.scenes} reference sheet(s) to your Google Flow (${esc(d.model)})…</span>`;
+  await poll(d.id,(j)=>{$('mcast').innerHTML=`<span class=ok>Flow: ${j.done}/${j.total} sheets ${esc(j.helper||'')}</span>`;if(j.done)syncCast()});await syncCast()}
+ catch(e){if(e.d&&e.d.offline&&ADMIN){$('mcast').textContent='Flow helper offline: using the free image models instead…';for(const c of S.cast){try{await api(`/api/characters/${c.id}/generate`,{})}catch(x){$('mcast').textContent=x.message}await syncCast()}}else $('mcast').textContent=e.message}busy(b,0)};
+/* step 4 + 5 */
+function drawScenes(){const v=$('aspect').value=='9:16'?' v':'';$('scenes').innerHTML=S.scenes.map((s,i)=>`<div class="scn${v}"><div class=im style="${s.img?`background-image:url(/uploads/${s.img})`:''}">${s.img?'':'Scene '+(i+1)}</div><div><small>${i+1}. ${esc(s.text)}</small><textarea data-i=${i}>${esc(s.prompt)}</textarea><div class=row style="margin-top:6px"><span class=tg>${esc((s.characters||[]).join(', '))}</span><button class=btn data-r=${i}>🔁 Regenerate</button></div></div></div>`).join('');
+ $('scenes').querySelectorAll('textarea').forEach(t=>t.onchange=()=>{S.scenes[t.dataset.i].prompt=t.value;save()});$('scenes').querySelectorAll('[data-r]').forEach(b=>b.onclick=()=>gen([+b.dataset.r],b));
+ const n=S.scenes.length;$('est').innerHTML=n?`<b>${n} images</b> on Nano Banana Pro through your Google Flow · <b>0 Flow credits</b> (Nano Banana Pro images use Flow's free daily image allowance). Free models are used only if your helper is offline.`:'Plan the scenes first.'}
+const drawGen=()=>{drawScenes();$('scenes2').innerHTML=$('scenes').innerHTML;$('scenes2').querySelectorAll('[data-r]').forEach(b=>b.onclick=()=>gen([+b.dataset.r],b));$('scenes2').querySelectorAll('textarea').forEach(t=>t.onchange=()=>{S.scenes[t.dataset.i].prompt=t.value;save()})};
+$('aspect').onchange=()=>{S.aspect=$('aspect').value;save();drawScenes()};
+$('bscenes').onclick=async()=>{const b=$('bscenes');busy(b,1,'Planning scenes…');$('mscenes').textContent='';try{S.scenes=(await api('/api/story/scenes',{script:$('sc').value,seconds:secs(),style:$('style').value,aspect:$('aspect').value,characters:S.cast.map(c=>c.id)})).scenes;save();drawScenes()}catch(e){$('mscenes').textContent=e.message}busy(b,0)};
+let FID=null,STOP=false;const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function poll(fid,cb){FID=fid;for(;;){await sleep(4000);const j=await api('/api/story/flow/'+fid,null,'GET');cb(j);if(j.done>=j.total||j.closed)return j}}
+async function gen(idx,btn){if(!S.scenes.length)return;STOP=false;const b=btn||$('bgen');busy(b,1,'Generating…');$('bstop').hidden=false;const tot=idx.length;let got=0;const bar=()=>{$('pb').style.width=(100*got/tot)+'%'};bar();
+ try{const d=await api('/api/story/flow',{kind:'scenes',aspect:$('aspect').value,style:$('style').value,scenes:idx.map(i=>Object.assign({n:i},S.scenes[i]))});$('mgen').innerHTML=`<span class=ok>Sent ${d.scenes} image(s) to Google Flow (${esc(d.model)}), one batch session…</span>`;
+  await poll(d.id,j=>{j.filled.forEach((f,k)=>{if(f){S.scenes[j.idx[k]].img=f.id}});got=j.done;save();bar();drawGen();$('mgen').innerHTML=`<span class=ok>Flow: ${j.done}/${j.total} ${esc(j.helper||'')}</span>`})}
+ catch(e){if(e.d&&e.d.offline&&ADMIN){$('mgen').textContent='Flow helper offline: using the free image models (automatic fallback)…';
+   for(const i of idx){if(STOP)break;try{const r=await api('/api/ai_image',{prompt:S.scenes[i].prompt,text:S.scenes[i].text,aspect:$('aspect').value,style:$('style').value});S.scenes[i].img=r.id;save()}catch(x){$('mgen').textContent=`Scene ${i+1}: ${x.message}`}got++;bar();drawGen()}}
+  else $('mgen').textContent=e.message}
+ busy(b,0);$('bstop').hidden=true;FID=null}
+$('bgen').onclick=()=>gen(S.scenes.map((_,i)=>i).filter(i=>!S.scenes[i].img));
+$('bstop').onclick=async()=>{STOP=true;if(FID)try{await api(`/api/story/flow/${FID}/stop`,{})}catch(e){}$('mgen').textContent='Stopped. No more Flow generations for this batch.'};
+/* step 6 */
+let BASE=null;function drawPick(){const ims=[...S.cast.filter(refUrl).map(c=>({id:c.refs[c.refs.length-1],u:refUrl(c)})),...S.scenes.filter(s=>s.img).map(s=>({id:s.img,u:'/uploads/'+s.img}))];
+ if(!BASE&&ims[0])BASE=ims[0].id;$('pick').innerHTML=ims.map(x=>`<img src="${x.u}" data-id="${x.id}" class="${x.id==BASE?'on':''}">`).join('')||'<span class=sub>Generate a character sheet or scene images first.</span>';
+ $('pick').querySelectorAll('img').forEach(m=>m.onclick=()=>{BASE=m.dataset.id;drawPick()});if(!$('ttext').value)$('ttext').value=S.title||'';drawThumbs()}
+const drawThumbs=()=>{$('thumbs').innerHTML=(S.thumbs||[]).map((t,i)=>`<div><img src="/uploads/${t}"><a class=btn style="margin-top:6px;text-align:center" href="/uploads/${t}" download="thumbnail-${i+1}.jpg">⬇ Download variant ${i+1}</a></div>`).join('')};
+$('bthumb').onclick=async()=>{const b=$('bthumb');busy(b,1,'Designing…');$('mthumb').textContent='';try{S.thumbs=(await api('/api/story/thumbs',{image:BASE,title:$('ttext').value,variants:3})).thumbs;save();drawThumbs()}catch(e){$('mthumb').textContent=e.message}busy(b,0)};
+$('bzip').onclick=async()=>{const files=[...S.cast.filter(refUrl).map(c=>({id:c.refs[c.refs.length-1],name:'character_'+c.name})),...S.scenes.map((s,i)=>s.img&&{id:s.img,name:'scene_'+String(i+1).padStart(2,'0')}).filter(Boolean),...(S.thumbs||[]).map((t,i)=>({id:t,name:'thumbnail_'+(i+1)}))];
+ const r=await fetch('/api/story/zip',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({files,script:$('sc').value,prompts:S.scenes.map((s,i)=>`${i+1}. ${s.prompt}`).join('\n\n')})});
+ if(!r.ok){$('mout').textContent='Zip failed';return}const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download=(S.title||'story').replace(/[^\w-]+/g,'_')+'.zip';a.click();$('mout').innerHTML=`<span class=ok>Zipped ${files.length} image(s) + script.</span>`};
+$('bcopy').onclick=async()=>{try{await navigator.clipboard.writeText($('sc').value);$('mout').innerHTML='<span class=ok>Script copied.</span>'}catch(e){$('sc').select();document.execCommand('copy')}};
+function send(to){if(to=='long')localStorage.setItem('mps_send_long',JSON.stringify({title:$('title').value,script:$('sc').value}));localStorage.setItem('mps_prefill',JSON.stringify({to,title:$('title').value,script:$('sc').value,scenes:S.scenes.map(s=>({text:s.text,prompt:s.prompt,img:s.img||null})),style:$('style').value,at:Date.now()}));location.href=to=='long'?'/longform':'/shorts#create'}
+$('blong').onclick=()=>send('long');$('bshort').onclick=()=>send('short');
+fetch('/api/presets').then(r=>r.json()).then(d=>{const L=Array.isArray(d)?d:(d.presets||[]);const g=document.createElement('optgroup');g.label='Channel presets';L.forEach(p=>{const o=new Option(p.name,p.id);g.appendChild(o)});$('style').appendChild(g);if(S.style)$('style').value=S.style}).catch(()=>{});
+/* restore */
+if(S.source){$('srctxt').value=S.source;$('srctxt').style.display='block'}drawIdeas();$('sc').value=S.script||'';$('title').value=S.title||'';if(S.len){$('len').value=S.len;$('len').onchange()}if(S.style)$('style').value=S.style;if(S.aspect)$('aspect').value=S.aspect;wc();drawCast();drawScenes();
+document.querySelector('.cc-nav[href="/story"]')?.classList.add('on');const fromHash=()=>{const i=C.findIndex(c=>'#'+c.id==location.hash);if(i>=0&&i!=K)go(i)};addEventListener('hashchange',fromHash);go(Math.max(0,C.findIndex(c=>'#'+c.id==location.hash)));
+</script></body></html>
