@@ -16,10 +16,10 @@ from pathlib import Path
 
 MEDIA = {".mp4", ".mov", ".webm", ".jpg", ".jpeg", ".png", ".webp"}
 STATE = Path.home() / ".flow-bridge"
-# Flow model-picker names -> gflow-cli --model aliases. Aliases are best-effort (gflow-cli is alpha); override with
-# GFLOW_MODEL_MAP='{"Nano Banana Pro":"pro"}'. Unknown names are passed through unchanged.
-GFLOW_MODELS = {"Nano Banana Pro": "nano-banana-pro", "Nano Banana 2": "nano2", "Veo 3.1 - Lite": "veo-3-1-lite", "Veo 3.1 - Fast": "veo-3-1-fast",
-                "Omni Flash": "omni-flash"}
+# Flow model-picker names -> gflow-cli --model aliases, checked against `gflow models --json` (gflow-cli 0.92.1, Oct 2026).
+# Override with GFLOW_MODEL_MAP='{"Nano Banana Pro":"nano-pro"}' if a later gflow renames them.
+GFLOW_MODELS = {"Nano Banana Pro": "nano-pro", "Nano Banana 2": "nano2", "Nano Banana 2 Lite": "nano2-lite", "Imagen 4": "image4",
+                "Veo 3.1 - Lite": "veo-lite", "Veo 3.1 - Fast": "veo-fast", "Veo 3.1 - Quality": "veo-quality", "Omni Flash": "omni-flash"}
 GFLOW_MODELS.update(json.loads(os.environ.get("GFLOW_MODEL_MAP", "{}") or "{}"))
 
 
@@ -85,31 +85,71 @@ def describe(a, kind):
     return ", ".join(out)
 
 
-def drive(job, folder, cap):
-    gflow = shutil.which("gflow")
+def gflow_bin():
+    for c in (shutil.which("gflow"), str(Path.home() / ".local/bin/gflow")):
+        if c and Path(c).exists():
+            return c
+    return None
+
+
+DRIFT = 23  # gflow-cli exit code: Flow's page changed (selector drift) -> stop driving, fall back to manual
+
+
+def drive(job, folder, cap, pace=(75, 120)):
+    """Route A/B: gflow-cli drives labs.google/flow in a real, headed Chrome with your own signed-in profile.
+    One scene at a time, 75-120 s apart, daily cap. Each file is saved as NN_scene.ext so it lands in the right scene."""
+    gflow = gflow_bin()
     if not gflow:
-        sys.exit("Experimental mode needs gflow-cli:  uv tool install gflow-cli  &&  gflow auth login --browser chrome")
+        print("[auto] gflow-cli is not installed; using the manual route (VEO Automation / drag-and-drop)."); return False
+    if subprocess.run([gflow, "auth", "status"], capture_output=True).returncode:
+        print("[auto] Flow is not signed in on this computer. Run:  flow-bridge --signin   (once), then start again."); return False
     STATE.mkdir(exist_ok=True)
     cf = STATE / f"count-{time.strftime('%Y-%m-%d')}.txt"
     used = int(cf.read_text() or 0) if cf.exists() else 0
+    refs = sorted(str(p) for p in Path(folder).glob("ref-*"))
     for sc in job["scenes"]:
         if used >= cap:
-            print(f"Daily cap of {cap} Flow generations reached. Run again tomorrow."); return
+            print(f"[auto] Daily cap of {cap} Flow generations reached. The rest can be done by hand or tomorrow."); return True
         if sc.get("filled"):
             continue
         kind, model = sc.get("type", "video"), sc.get("model", "")
-        print(f"[drive] scene {sc['n']}: {kind} with {model or 'Flow default'}…")
-        cmd = [gflow, "image", "t2i"] if kind == "image" else [gflow, "video", "t2v"]
-        cmd += [sc["prompt"], "--aspect", job["aspect"]]
-        if model:
-            cmd += ["--model", GFLOW_MODELS.get(model, model)]
+        a = sc.get("advanced") or {}
+        alias = GFLOW_MODELS.get(model, "")
+        my = [r for r in refs if any(c.lower() in r.lower() for c in sc.get("characters") or [])] or (refs if sc.get("characters") else [])
+        ext = ".png" if kind == "image" else ".mp4"
+        out = Path(folder) / f"{sc['n']:02d}_scene{ext}"
+        if kind == "image":
+            cmd = [gflow, "image", "i2i" if my else "t2i", sc["prompt"], "--aspect", job["aspect"], "-n", "1"]
+            for r in my[:3]:
+                cmd += ["--ref", r]
+            tmp = STATE / "tmp"; shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(parents=True)
+            cmd += ["-o", str(out)] if not my else ["--out", str(tmp)]
+        else:
+            dur = str(a.get("duration") or job.get("duration") or 8)
+            dur = dur if dur in ("4", "6", "8", "10") else "8"
+            cmd = [gflow, "video", "r2v" if my else "t2v", sc["prompt"], "--aspect", job["aspect"], "--duration", dur, "-o", str(out)]
+            for r in my[:3]:
+                cmd += ["--ref", r]
+        if alias:
+            cmd += ["--model", alias]
+        print(f"[auto] scene {sc['n']}: {kind} · {model or 'Flow default'}{' · ' + str(len(my)) + ' character ref(s)' if my else ''} …", flush=True)
         r = subprocess.run(cmd, cwd=folder)
-        if r.returncode and model:  # alias not recognised by this gflow version: retry with Flow's own default
-            print(f"[drive] gflow did not accept model '{model}', retrying with the default model")
-            subprocess.run(cmd[:-2], cwd=folder)
+        if r.returncode == DRIFT:
+            print("[auto] Flow's page changed and gflow-cli can't find its buttons (exit 23). Stopping automation;"
+                  " finish the remaining scenes by hand (prompts.txt) or update:  uv tool upgrade gflow-cli"); return False
+        if r.returncode and alias:
+            print(f"[auto] '{alias}' was not accepted; retrying with Flow's default model")
+            r = subprocess.run(cmd[:-2], cwd=folder)
+        if not out.exists() and kind == "image" and my:  # i2i wrote into tmp: move it in with the scene number
+            new = sorted((STATE / "tmp").glob("*.*"), key=lambda p: p.stat().st_mtime)
+            if new:
+                shutil.move(str(new[-1]), str(out.with_suffix(new[-1].suffix)))
         used += 1; cf.write_text(str(used))
-        wait = random.randint(60, 90)
-        print(f"[drive] pausing {wait}s so Flow sees a human pace"); time.sleep(wait)
+        if r.returncode:
+            print(f"[auto] scene {sc['n']} failed (exit {r.returncode}); it stays open for a manual upload.")
+        wait = random.randint(*pace)
+        print(f"[auto] pausing {wait}s so Flow sees a human pace"); time.sleep(wait)
+    return True
 
 
 KEYF = Path.home() / ".flow-bridge" / "key"
@@ -149,7 +189,10 @@ def connect(base, key, folder, use_drive, cap):
         try:
             jobs = ping(base, key).get("jobs", [])
         except urllib.error.HTTPError as e:
-            sys.exit("Bridge key rejected. It was unlinked or replaced. Pair again: Studio → Account → Connect my Google Flow." if not KEYF.unlink(missing_ok=True) else "" if e.code == 403 else str(e))
+            if e.code == 403:
+                KEYF.unlink(missing_ok=True)
+                sys.exit("This computer was unlinked (or paired again elsewhere). Pair again: Studio → Account → Connect my Google Flow.")
+            print(f"(server said {e.code}, retrying)"); time.sleep(30); continue
         except Exception as e:
             print(f"(offline: {type(e).__name__}, retrying)"); time.sleep(20); continue
         for job in jobs:
@@ -194,7 +237,7 @@ def watch(job, token, folder, use_drive, cap, base=None, key=None):
             except Exception:
                 pass
         new = sorted((p for p in folder.rglob("*") if p.suffix.lower() in MEDIA and p not in seen
-                      and p.stat().st_mtime >= start and not p.name.startswith(".")), key=lambda p: p.stat().st_mtime)
+                      and p.stat().st_mtime >= start and not p.name.startswith((".", "ref-")) and p.name != "prompts.txt"), key=lambda p: p.stat().st_mtime)
         for p in new:
             seen.add(p)
             if not stable(p):
@@ -218,11 +261,21 @@ def main():
     ap.add_argument("--connect", metavar="STUDIO_URL", help="stay connected: Studio sends new jobs here automatically")
     ap.add_argument("--folder", default=str(Path.home() / "Downloads"), help="folder Flow / VEO Automation saves into")
     ap.add_argument("--token", default=os.environ.get("FLOW_TOKEN", ""), help="job token or bridge key (else asked, never saved)")
-    ap.add_argument("--drive", action="store_true", help="EXPERIMENTAL: drive Flow with gflow-cli (60-90 s pacing)")
+    ap.add_argument("--drive", action="store_true", default=True, help="drive Flow automatically with gflow-cli (default on)")
+    ap.add_argument("--manual", action="store_true", help="never drive Flow; only watch the folder for files you make yourself")
+    ap.add_argument("--signin", action="store_true", help="one-time: open Chrome to sign in to Google Flow (your own account)")
     ap.add_argument("--pair", nargs="?", const="ask", metavar="CODE", help="pair with the code from Studio → Account → Connect my Google Flow")
     ap.add_argument("--account", default="", help="label for the Google account signed into Flow (shown on your Account page)")
     ap.add_argument("--cap", type=int, default=20, help="daily cap for --drive (default 20)")
     a = ap.parse_args()
+    if a.manual:
+        a.drive = False
+    if a.signin:
+        g = gflow_bin()
+        if not g:
+            sys.exit("gflow-cli is missing. Re-run the installer.")
+        print("A Chrome window opens. Sign in to YOUR Google account, then click 'Sign in to Flow' if asked. Close it when Flow shows your projects.")
+        sys.exit(subprocess.run([g, "auth", "login", "--browser", "chrome"]).returncode)
     if not a.job and not a.connect:
         ap.error("use --connect https://moneyprinter-studio.onrender.com  or  --job file.json")
     folder = Path(a.folder).expanduser(); folder.mkdir(parents=True, exist_ok=True)
