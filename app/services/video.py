@@ -1822,6 +1822,30 @@ def render_preview_frame(params, text, width, height, out_png, at=None):
         shutil.rmtree(d, ignore_errors=True)
 
 
+def make_end_card(card_path, width, height, end_txt, wm=""):
+    """End card PNG drawn with Pillow (this ffmpeg build has no drawtext); overlaid for the last 2.5 s."""
+    from PIL import Image, ImageDraw, ImageFont
+    fdir = os.path.join(utils.root_dir(), "resource", "fonts")
+    card = Image.new("RGBA", (width, height), (11, 10, 26, 235))
+    dr = ImageDraw.Draw(card)
+    fs = max(28, width // 14)
+    f1 = ImageFont.truetype(os.path.join(fdir, "Poppins-Regular.ttf"), fs * 2 // 3)
+    f2 = ImageFont.truetype(os.path.join(fdir, "Poppins-Bold.ttf"), fs)
+    for txt, fnt, col, y in (("Follow for more", f1, (201, 184, 245), height // 2 - fs * 3 // 2),
+                             (end_txt, f2, (244, 239, 230), height // 2 - fs // 3)):
+        tw = dr.textlength(txt, font=fnt)
+        dr.text(((width - tw) / 2, y), txt, font=fnt, fill=col)
+    dr.rounded_rectangle(((width - width // 3) // 2, height // 2 + fs, (width + width // 3) // 2, height // 2 + fs + 6), 3, fill=(168, 85, 247))
+    if wm:
+        try:
+            lg = Image.open(wm).convert("RGBA"); lg.thumbnail((width // 2, height // 6))
+            card.alpha_composite(lg, ((width - lg.width) // 2, height // 2 - fs * 3 // 2 - lg.height - fs // 2))
+        except Exception:
+            pass
+    card.save(card_path)
+    return card_path
+
+
 def _ffmpeg_final_render(video_path, audio_path, subtitle_path, output_file, params,
                          bgm_file_override, width, height) -> bool:
     """Low-memory final render: one ffmpeg process (libass subtitles + audio mix),
@@ -1866,26 +1890,8 @@ def _ffmpeg_final_render(video_path, audio_path, subtitle_path, output_file, par
                   f";[{last}][wm]overlay=W-w-{width // 36}:{height // 40}:eof_action=repeat[v1]")
         last = "v1"
     if end_txt:  # end card drawn with Pillow (this ffmpeg build has no drawtext), overlaid for the last 2.5s
-        from PIL import Image, ImageDraw, ImageFont
-        fdir = os.path.join(utils.root_dir(), "resource", "fonts")
-        card = Image.new("RGBA", (width, height), (11, 10, 26, 235))
-        dr = ImageDraw.Draw(card)
-        fs = max(28, width // 14)
-        f1 = ImageFont.truetype(os.path.join(fdir, "Poppins-Regular.ttf"), fs * 2 // 3)
-        f2 = ImageFont.truetype(os.path.join(fdir, "Poppins-Bold.ttf"), fs)
-        for txt, fnt, col, y in (("Follow for more", f1, (201, 184, 245), height // 2 - fs * 3 // 2),
-                                 (end_txt, f2, (244, 239, 230), height // 2 - fs // 3)):
-            tw = dr.textlength(txt, font=fnt)
-            dr.text(((width - tw) / 2, y), txt, font=fnt, fill=col)
-        dr.rounded_rectangle(((width - width // 3) // 2, height // 2 + fs, (width + width // 3) // 2, height // 2 + fs + 6), 3, fill=(168, 85, 247))
-        if wm:
-            try:
-                lg = Image.open(wm).convert("RGBA"); lg.thumbnail((width // 2, height // 6))
-                card.alpha_composite(lg, ((width - lg.width) // 2, height // 2 - fs * 3 // 2 - lg.height - fs // 2))
-            except Exception:
-                pass
         card_path = output_file + ".endcard.png"
-        card.save(card_path)
+        make_end_card(card_path, width, height, end_txt, wm)
         cmd += ["-threads", "1", "-loop", "1", "-framerate", "30", "-t", f"{adur + END:.2f}", "-i", card_path]; ci = idx; idx += 1
         graph += f";[{last}][{ci}:v]overlay=0:0:eof_action=repeat:enable='gte(t,{adur:.2f})'[v2]"
         last = "v2"
