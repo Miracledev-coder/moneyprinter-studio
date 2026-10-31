@@ -174,8 +174,46 @@ def pair(base, code, label):
     return d["key"]
 
 
+CREDITS = {"n": None, "at": 0}
+
+
+def read_credits():
+    """Flow credit balance via `gflow credits user --json` (reads the number in Flow's account menu; spends nothing)."""
+    g = gflow_bin()
+    if not g:
+        return
+    try:
+        out = subprocess.run([g, "credits", "user", "--json"], capture_output=True, text=True, timeout=180).stdout
+        d = json.loads(out[out.find("{"):] or "{}")
+        def find(x):
+            if isinstance(x, dict):
+                for k, v in x.items():
+                    if isinstance(v, (int, float)) and not isinstance(v, bool) and any(w in k.lower() for w in ("credit", "balance", "remaining")):
+                        return int(v)
+                    r = find(v)
+                    if r is not None:
+                        return r
+            if isinstance(x, list):
+                for v in x:
+                    r = find(v)
+                    if r is not None:
+                        return r
+        n = find(d)
+        if n is not None:
+            CREDITS["n"] = n
+            print(f"Flow credits left: {n}")
+    except Exception as e:
+        print(f"(could not read Flow credits: {type(e).__name__})")
+
+
+def credits_loop():
+    while True:
+        read_credits(); CREDITS["at"] = time.time(); time.sleep(1800)
+
+
 def ping(base, key):
-    req = urllib.request.Request(base.rstrip("/") + "/api/flow/ping", data=b"{}", method="POST",
+    body = json.dumps({"credits": CREDITS["n"]} if CREDITS["n"] is not None else {}).encode()
+    req = urllib.request.Request(base.rstrip("/") + "/api/flow/ping", data=body, method="POST",
                                  headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "flow-bridge/1.0",
                                           **({"X-Flow-Account": LABEL} if LABEL else {})})
     with urllib.request.urlopen(req, timeout=60) as r:
@@ -185,6 +223,8 @@ def ping(base, key):
 def connect(base, key, folder, use_drive, cap):
     """Stay online: heartbeat every 20 s, pick up new jobs (renders that chose the Flow engine) and fill them."""
     print(f"Connected to {base}. Studio now uses Google Flow while this window stays open. (Ctrl+C to stop)")
+    import threading
+    threading.Thread(target=credits_loop, daemon=True).start()
     done_jobs = set()
     while True:
         try:

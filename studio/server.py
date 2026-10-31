@@ -1716,6 +1716,26 @@ def flow_engine_get(req: Request):
             "video_models": TIERS, "image_models": ITIERS}
 
 
+# Google Flow credits per generation, from Google's help page "Manage your Google Flow credits"
+# (support.google.com/flow/answer/16526234, read 2026-10-31). Images are not on Google's table; gflow-cli's docs
+# (E2E_TESTING.md, confirmed with its maintainer 2026-09-02) say image generation spends 0 credits and has a daily cap.
+FLOW_COSTS = {
+    "video": {"lite": {"std": 10, "ultra": 5}, "fast": {"std": 20, "ultra": 10}, "quality": {"std": 100, "ultra": 100},
+              "omni": {"by_sec": {"4": 7, "6": 10, "8": 12, "10": 15}}},
+    "image": {"pro": 0, "nb2": 0, "lite": 0},
+    "source": "https://support.google.com/flow/answer/16526234", "image_note": "0 credits (daily image quota, per gflow-cli docs; not on Google's table)",
+}
+
+
+@app.get("/api/flow/costs")
+def flow_costs(req: Request):
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    m = _fmeta(u)
+    return {**FLOW_COSTS, "balance": m.get("credits"), "balance_at": m.get("credits_at")}
+
+
 @app.post("/api/flow/engine")
 async def flow_engine_set(req: Request):
     u = current_user(req)
@@ -1740,6 +1760,12 @@ async def flow_ping(req: Request):
     if not u:
         return JSONResponse({"error": "bad bridge key"}, 403)
     _online(u)
+    try:
+        cr = (await req.json()).get("credits")
+        if isinstance(cr, int) and 0 <= cr < 10 ** 7 and (cr != _fmeta(u).get("credits") or time.time() - _fmeta(u).get("credits_at", 0) > 1800):
+            _fmeta(u, credits=cr, credits_at=time.time())
+    except Exception:
+        pass
     lab = clean_text(req.headers.get("x-flow-account"), 80)
     if lab or time.time() - _fmeta(u).get("seen", 0) > 600:
         _fmeta(u, seen=time.time(), **({"label": lab} if lab else {}))

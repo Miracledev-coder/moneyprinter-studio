@@ -17,5 +17,16 @@
  const fi=document.getElementById('fimg')||document.getElementById('sp_img'),fv=document.getElementById('fvid')||document.getElementById('sp_vid');
  if(fi.id=='sp_img'){document.getElementById('sp_models').style.display='flex';const pv=window.ccExtra;window.ccExtra=b=>Object.assign(pv(b)||{},{flow_image_model:fi.value,flow_video_model:fv.value})}
  fetch('/api/flow/engine').then(r=>r.json()).then(d=>{if(d.image_model)fi.value=d.image_model;if(d.video_model)fv.value=d.video_model});
+ const est=document.createElement('div');est.id='flow_est';est.style.cssText='font-size:12px;color:#c9c4ea;margin-top:6px;line-height:1.45';(fv.closest('div')||fv.parentElement).appendChild(est);let C=null;
+ const vc=(k,sec)=>{if(!C)return null;const v=C.video[k];if(!v)return null;if(v.by_sec){const d=[4,6,8,10].find(x=>x>=sec)||10;return v.by_sec[d]}return v.std};
+ const lab={lite:'Veo 3.1 Lite',fast:'Veo 3.1 Fast',quality:'Veo 3.1 Quality',omni:'Omni Flash'};
+ const secs=()=>{const ls=document.getElementById('ls');if(ls){const w=(ls.value.trim().match(/\S+/g)||[]).length;return w/150*60}const L=document.getElementById('length');return L?(parseFloat(L.value)||30):30};
+ const upd=()=>{if(!C)return;const s=secs(),shots=Math.max(1,Math.ceil(s/3)),vmax=Math.max(1,Math.floor(shots/5)),c=vc(fv.value,4);
+  est.innerHTML=`💳 <b>Est. Flow credits for this video: ${c*1}–${c*vmax}</b> · ~${shots} shots: ${shots-1}–${shots-vmax} images (0 credits, daily quota) + 1–${vmax} video clip${vmax>1?'s':''} × ${c} (${lab[fv.value]}, 4 s, 720p). Prices for non-Ultra plans${fv.value=='lite'||fv.value=='fast'?' (Ultra pays half)':''}. <a href="${C.source}" target=_blank style="color:#b9a6ff">Google's price list</a>`+
+   (C.balance!=null?` · <b>${C.balance.toLocaleString()} credits left</b> <small>(read by your helper ${new Date(C.balance_at*1000).toLocaleTimeString()})</small>`:' · balance: connect the Flow helper to see it');};
+ fetch('/api/flow/costs').then(r=>r.ok?r.json():null).then(d=>{if(!d)return;C=d;
+  [...fv.options].forEach(o=>{const v=C.video[o.value];if(!v)return;o.textContent=lab[o.value]+' · '+(v.by_sec?`${v.by_sec['4']}–${v.by_sec['10']} cr (4–10 s)`:v.std==v.ultra?`${v.std} cr`:`${v.std} cr (Ultra ${v.ultra})`)});
+  [...fi.options].forEach(o=>{if(!/·/.test(o.textContent))o.textContent+=' · 0 cr (daily quota)'});upd()});
+ fv.addEventListener('change',upd);document.addEventListener('input',e=>{if(['ls','length'].includes(e.target.id))upd()});document.addEventListener('change',e=>{if(e.target.id=='length')upd()});
  const save=()=>fetch('/api/flow/engine',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({image_model:fi.value,video_model:fv.value})});fi.addEventListener('change',save);fv.addEventListener('change',save)})();
 </script>
