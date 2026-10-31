@@ -1800,6 +1800,25 @@ def flow_runner(user, jid, req):
     return run
 
 
+def _signed_key(u):
+    """Helper key that verifies by signature (SESSION_SECRET), so a pairing survives the free plan's disk wipe."""
+    import base64
+    b = base64.urlsafe_b64encode(u.encode()).decode().rstrip("=")
+    n = secrets.token_urlsafe(12)
+    return f"fs_{b}.{n}." + hmac.new(SECRET, f"flowkey|{b}|{n}".encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def _signed_user(tok):
+    import base64
+    try:
+        b, n, sig = tok[3:].split(".")
+        if not tok.startswith("fs_") or not hmac.compare_digest(sig, hmac.new(SECRET, f"flowkey|{b}|{n}".encode(), hashlib.sha256).hexdigest()[:32]):
+            return None
+        return base64.urlsafe_b64decode(b + "=" * (-len(b) % 4)).decode()
+    except Exception:
+        return None
+
+
 def _bridge_user(req):
     tok = (req.headers.get("authorization") or "").removeprefix("Bearer ").strip()
     if not tok:
@@ -1818,6 +1837,10 @@ def _bridge_user(req):
                 hit = next((u for u, h in k.items() if hmac.compare_digest(h, th)), None)
         except Exception:
             pass
+    if hit is None and (su := _signed_user(tok)):
+        k = _keys()
+        if su not in k:  # keys.json was wiped (deploy/restart): adopt this validly signed key again
+            k[su] = th; _keys_save(k); hit = su
     return hit
 
 
@@ -1827,7 +1850,7 @@ async def flow_key(req: Request):
     u = current_user(req)
     if not u:
         return JSONResponse({"error": "not logged in"}, 401)
-    key = "fb_" + secrets.token_urlsafe(24)
+    key = _signed_key(u)
     k = _keys(); k[u] = hashlib.sha256(key.encode()).hexdigest(); _keys_save(k)
     _fmeta(u, paired=time.time(), label=_fmeta(u).get("label", ""), via="key")
     return {"key": key, "install": "curl -fsSL https://raw.githubusercontent.com/Miracledev-coder/moneyprinter-studio/main/tools/flow-bridge/install.sh | sh",
@@ -1883,7 +1906,7 @@ async def flow_claim(req: Request):
         _fails["pair:" + ip] = f + [now]
         return JSONResponse({"error": "That code is wrong or expired. Make a new one on the Account page."}, 403)
     u = hit[0]
-    key = "fb_" + secrets.token_urlsafe(24)
+    key = _signed_key(u)
     k = _keys(); k[u] = hashlib.sha256(key.encode()).hexdigest(); _keys_save(k)  # replaces any older helper for this user
     _fmeta(u, paired=now, label=clean_text(b.get("label"), 80), device=clean_text(b.get("device"), 60), via="code")
     return {"key": key, "user": u}
