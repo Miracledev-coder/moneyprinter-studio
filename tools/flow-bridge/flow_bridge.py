@@ -11,7 +11,7 @@ Experimental: --drive uses gflow-cli (https://github.com/ffroliva/gflow-cli, uno
 with your own signed-in Chrome, at a human pace (about 15 s between prompts, configurable) with a daily cap of 50. Use at your own risk.
 No password is ever asked for or stored. Python standard library only.
 """
-import argparse, getpass, json, mimetypes, os, random, re, shutil, subprocess, sys, time, urllib.request, uuid
+import argparse, getpass, json, mimetypes, os, random, re, shutil, subprocess, sys, time, urllib.parse, urllib.request, uuid
 from pathlib import Path
 
 MEDIA = {".mp4", ".mov", ".webm", ".jpg", ".jpeg", ".png", ".webp"}
@@ -436,7 +436,7 @@ KEYF = Path.home() / ".flow-bridge" / "key"
 BASEF = Path.home() / ".flow-bridge" / "base"
 LOGF = Path.home() / ".flow-bridge" / "helper.log"
 LABEL = os.environ.get("FLOW_ACCOUNT", "")
-VERSION = "2026.10.31.6"
+VERSION = "2026.10.31.7"
 DEFAULT_BASE = "https://moneyprinter-studio.onrender.com"
 RAW = "https://raw.githubusercontent.com/Miracledev-coder/moneyprinter-studio/main/tools/flow-bridge/flow_bridge.py"
 AGENT = "com.calmcraze.flowbridge"
@@ -662,6 +662,228 @@ def ping(base, key):
         return json.loads(r.read())
 
 
+# ---------------- Mac rendering: Studio hands the final compose of a Short to this computer ----------------
+RENDER_DIR = STATE / "render"
+FFMPEG_LOCAL = STATE / "bin" / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+RENDER_DISK_CAP = 1 << 30  # keep render temp files under ~1 GB
+
+
+def _fetch_ffmpeg():
+    """Self-updated helpers that never re-ran the installer: fetch the same static evermeet.cx ffmpeg (no compiling)."""
+    if sys.platform != "darwin":
+        return
+    import io, zipfile
+    try:
+        with urllib.request.urlopen(urllib.request.Request("https://evermeet.cx/ffmpeg/getrelease/zip", headers={"User-Agent": "flow-bridge/" + VERSION}), timeout=300) as r:
+            z = zipfile.ZipFile(io.BytesIO(r.read()))
+        FFMPEG_LOCAL.parent.mkdir(parents=True, exist_ok=True)
+        tmp = FFMPEG_LOCAL.with_suffix(".tmp")
+        tmp.write_bytes(z.read("ffmpeg")); tmp.chmod(0o755); os.replace(tmp, FFMPEG_LOCAL)
+        print("Installed ffmpeg for fast rendering on this Mac.", flush=True)
+    except Exception as e:
+        print("(could not install ffmpeg:", type(e).__name__, ")", flush=True)
+
+
+def _ffmpeg():
+    if FFMPEG_LOCAL.exists() and os.access(FFMPEG_LOCAL, os.X_OK):
+        return str(FFMPEG_LOCAL)
+    return shutil.which("ffmpeg")
+
+
+def _api(base, key, path, body=None, method=None, timeout=60, headers=None, raw=False):
+    data = json.dumps(body).encode() if body is not None and not raw else body
+    h = {"Authorization": f"Bearer {key}", "User-Agent": "flow-bridge/" + VERSION, "X-Flow-Version": VERSION, **(headers or {})}
+    if body is not None and not raw:
+        h["Content-Type"] = "application/json"
+    req = urllib.request.Request(base.rstrip("/") + path, data=data, method=method or ("POST" if body is not None else "GET"), headers=h)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def _engine(base, key, want):
+    """fastrender.py comes from Studio itself, so the Mac always renders with the server's exact version."""
+    import importlib.util
+    f = STATE / "fastrender.py"
+    have = re.search(r'^ENGINE_VERSION = "([^"]+)"', f.read_text(), re.M) if f.exists() else None
+    if not have or have.group(1) != want:
+        src = _api(base, key, "/api/render/engine.py").decode()
+        compile(src, "fastrender.py", "exec")
+        f.write_text(src, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("fastrender", f)
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    return m
+
+
+def _sha(p):
+    import hashlib
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def _local_copies(folder, hint, inputs):
+    """Flow files the helper already downloaded (same size + sha256): no need to fetch them back from Studio."""
+    want = {i["size"]: [] for i in inputs if i["name"].startswith("scene")}
+    for i in inputs:
+        if i["name"].startswith("scene"):
+            want[i["size"]].append(i)
+    found, dirs = {}, []
+    if hint and (Path(folder) / f"flow-{hint[:8]}").is_dir():
+        dirs.append(Path(folder) / f"flow-{hint[:8]}")
+    try:  # then the most recent Flow job folders
+        dirs += sorted((d for d in Path(folder).glob("flow-*") if d.is_dir() and d not in dirs), key=lambda d: -d.stat().st_mtime)[:6]
+    except OSError:
+        pass
+    for d in dirs:
+        for f in d.iterdir():
+            try:
+                cands = want.get(f.stat().st_size) if f.is_file() else None
+            except OSError:
+                continue
+            if not cands or all(c["name"] in found for c in cands):
+                continue
+            h = _sha(f)
+            for c in cands:
+                if c["name"] not in found and c["sha256"] == h:
+                    found[c["name"]] = f
+        if len(found) == sum(len(v) for v in want.values()):
+            break
+    return found
+
+
+def _clean_renders(keep=None):
+    if not RENDER_DIR.exists():
+        return
+    for d in RENDER_DIR.iterdir():
+        if d.name != keep:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def _upload_result(base, key, rid, out, timings):
+    size = out.stat().st_size
+    with open(out, "rb") as f:
+        req = urllib.request.Request(base.rstrip("/") + f"/api/render/{rid}/result", data=f, method="POST",
+                                     headers={"Authorization": f"Bearer {key}", "User-Agent": "flow-bridge/" + VERSION,
+                                              "Content-Type": "video/mp4", "Content-Length": str(size),
+                                              "X-Render-Timings": json.dumps(timings)})
+        with urllib.request.urlopen(req, timeout=600) as r:
+            return json.loads(r.read())
+
+
+RENDER_ACTIVE = {}
+
+
+def render_one(base, key, folder, job):
+    """Render one Studio job here. Always removes its temp folder; Stop in Studio kills ffmpeg within ~2 s."""
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    rid, t0 = job["rid"], time.time()
+    wd = RENDER_DIR / rid
+    stop = threading.Event(); state = {"pct": 1, "msg": "Starting on your Mac"}
+    RENDER_ACTIVE[rid] = stop
+
+    def beat():
+        while not stop.is_set():
+            try:
+                r = json.loads(_api(base, key, f"/api/render/{rid}/progress", state, timeout=20))
+                if r.get("cancel"):
+                    stop.set(); break
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403, 404):
+                    stop.set(); break
+            except Exception:
+                pass
+            stop.wait(2)
+    try:
+        _clean_renders(keep=None)
+        wd.mkdir(parents=True, exist_ok=True)
+        ff = _ffmpeg()
+        if not ff:
+            raise RuntimeError("ffmpeg is not installed (run the one-line installer again)")
+        tot = sum(i["size"] for i in job["inputs"])
+        if tot > RENDER_DISK_CAP // 2 or shutil.disk_usage(str(RENDER_DIR)).free < tot * 3 + (300 << 20):
+            raise RuntimeError("not enough free disk space for this render")
+        done = threading.Event()
+        threading.Thread(target=beat, daemon=True).start()
+        eng = _engine(base, key, job.get("engine", ""))
+        t_dl = time.time()
+        local = _local_copies(folder, job.get("hint", ""), job["inputs"])
+
+        def fetch(i):
+            if stop.is_set():
+                return
+            dst = wd / i["name"]; dst.parent.mkdir(parents=True, exist_ok=True)
+            if i["name"] in local:
+                try:
+                    os.link(local[i["name"]], dst)
+                except OSError:
+                    os.symlink(local[i["name"]], dst)
+                return
+            req = urllib.request.Request(base.rstrip("/") + f"/api/render/{rid}/file/{urllib.parse.quote(i['name'])}",
+                                         headers={"Authorization": f"Bearer {key}", "User-Agent": "flow-bridge/" + VERSION})
+            with urllib.request.urlopen(req, timeout=120) as r, open(dst, "wb") as f:
+                shutil.copyfileobj(r, f, 1 << 20)
+        state.update(pct=3, msg="Fetching inputs")
+        with ThreadPoolExecutor(6) as ex:
+            list(ex.map(fetch, job["inputs"]))
+        if stop.is_set():
+            raise eng.Cancelled()
+        t_dl = time.time() - t_dl
+        mac = sys.platform == "darwin"
+        cores = os.cpu_count() or 4
+
+        def prog(pct, msg=""):
+            state.update(pct=int(pct), msg=msg or state["msg"])
+        out = wd / "out.mp4"
+        enc = os.environ.get("FLOW_RENDER_ENCODER") or ("h264_videotoolbox" if mac else "libx264")
+        r = eng.render(job["spec"], str(wd), str(out), ffmpeg=ff, encoder=enc,
+                       workers=max(1, min(4, cores // 2)), threads="2", final_threads="0",
+                       cancel=stop.is_set, progress=prog, log=lambda m: print(m, flush=True))
+        r.update(fetch_s=round(t_dl, 1), reused=len(local), downloaded=len(job["inputs"]) - len(local))
+        state.update(pct=99, msg="Uploading the video")
+        t_up = time.time()
+        _upload_result(base, key, rid, out, dict(r, upload_s=0))
+        r["upload_s"] = round(time.time() - t_up, 1)
+        print(f"[{time.strftime('%H:%M')}] rendered job {job['job'][:8]} on this computer in {time.time() - t0:.0f}s "
+              f"(cut {r['cut_s']}s, final {r['final_s']}s, {r['encoder']}, {r['reused']} Flow files reused)", flush=True)
+    except Exception as e:
+        cancelled = type(e).__name__ == "Cancelled" or stop.is_set()
+        print(f"Render {job['job'][:8]} {'stopped' if cancelled else 'failed: ' + str(e)[-200:]}", flush=True)
+        if not cancelled:
+            try:
+                _api(base, key, f"/api/render/{rid}/fail", {"error": f"{type(e).__name__}: {str(e)[-300:]}"}, timeout=20)
+            except Exception:
+                pass
+    finally:
+        stop.set()
+        RENDER_ACTIVE.pop(rid, None)
+        shutil.rmtree(wd, ignore_errors=True)
+
+
+def render_loop(base, key, folder):
+    """Long-poll Studio for renders: a waiting job is claimed within a second, not on the next 20 s ping."""
+    if os.environ.get("FLOW_RENDER", "1") == "0":
+        return
+    _clean_renders()
+    if not _ffmpeg():
+        _fetch_ffmpeg()
+    bad = 0
+    while True:
+        if not _ffmpeg():
+            time.sleep(1800); _fetch_ffmpeg(); continue
+        try:
+            job = json.loads(_api(base, key, "/api/render/next?wait=25", {}, timeout=60))
+            bad = 0
+        except urllib.error.HTTPError as e:
+            bad += 1; time.sleep(min(300, 15 * bad)); continue  # 404 = Studio without Mac rendering yet
+        except Exception:
+            bad += 1; time.sleep(min(120, 5 * bad)); continue
+        if job.get("rid"):
+            render_one(base, key, folder, job)
+
+
 def connect(base, key, folder, use_drive, cap, bg=False):
     """Stay online: heartbeat every 20 s, pick up new jobs (renders that chose the Flow engine) and fill them."""
     CTX.update(base=base, key=key)
@@ -675,6 +897,7 @@ def connect(base, key, folder, use_drive, cap, bg=False):
     last_upd = time.time()
     import threading
     threading.Thread(target=credits_loop, daemon=True).start()
+    threading.Thread(target=render_loop, args=(base, key, folder), daemon=True).start()
     done_jobs = set()
     bad = 0
     while True:

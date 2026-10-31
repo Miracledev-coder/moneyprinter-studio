@@ -1,6 +1,6 @@
 """AI director (free): Gemini writes + self-critiques the script, plans every shot,
 scores real stock thumbnails with vision in ONE call, and cuts clips to the voice timing."""
-import base64, hashlib, json, math, os, re, subprocess, urllib.parse, urllib.request
+import base64, hashlib, json, math, os, re, subprocess, threading, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -341,10 +341,15 @@ Return JSON {{"scores": [{{"id": "S1C1", "score": 0-10, "watermark": false, "che
     return picks, len(imgs)
 
 
-def word_times(text, voice, rate, mp3):
-    """Edge TTS once to get word boundaries; returns list of (start_s, end_s, word) and audio duration."""
+def word_times(text, voice, rate, mp3, keep=False):
+    """Edge TTS once to get word boundaries; returns list of (start_s, end_s, word) and audio duration
+    (keep=True: also the SubMaker, so this same mp3 becomes the final voice and its subtitles: no second TTS)."""
     from app.services import voice as vs
+    if keep and hasattr(vs, "parse_voice_name"):
+        voice = vs.parse_voice_name(voice)
     sm = vs.tts(text=text, voice_name=voice, voice_rate=rate, voice_file=mp3)
+    if sm is None:
+        raise RuntimeError("voice synthesis failed")
     cues = getattr(sm, "cues", None) or []
     out = []
     for c in cues:
@@ -353,7 +358,8 @@ def word_times(text, voice, rate, mp3):
     if not out:  # legacy SubMaker
         for (a, b), w in zip(getattr(sm, "offset", []), getattr(sm, "subs", [])):
             out.append((a / 1e7, b / 1e7, w))
-    return out, vs.get_audio_duration(sm) if hasattr(vs, "get_audio_duration") else (out[-1][1] if out else 0)
+    total = vs.get_audio_duration(sm) if hasattr(vs, "get_audio_duration") else (out[-1][1] if out else 0)
+    return (out, total, sm) if keep else (out, total)
 
 
 def sentence_durations(lines, words, total):
@@ -486,8 +492,9 @@ def join(clips, fades, xf, dst):
 
 def direct(jid, topic, script, secs, voice, rate, aspect, workdir, log=print, progress=None, crossfade=True, style="",
            visuals="stock", ai_style="realistic", ai_prompts=None, keep_script=False, flow=None, chars=None, free_ai=True,
-           preset=None):
-    """Full director pass. Returns dict(script, clips=[paths], clip_max, report)."""
+           preset=None, defer=False):
+    """Full director pass. Returns dict(script, clips=[paths], clip_max, report).
+    defer=True: no cutting/joining here; returns dict(plan=..., audio=mp3, sub_maker=...) for fastrender (Mac or server)."""
     W, H = (1280, 720) if aspect == "16:9" else (720, 1280)  # same as the final render: less RAM, no double scaling
     workdir = Path(workdir); workdir.mkdir(parents=True, exist_ok=True)
     P = progress or (lambda n: None)
@@ -507,6 +514,15 @@ def direct(jid, topic, script, secs, voice, rate, aspect, workdir, log=print, pr
     text = sc["script"]
     lines = sentences(text, cap=60 if pr else 24)
     text = " ".join(lines)
+    # the voice only depends on the final text: synthesize it now, in parallel with shot planning and Flow
+    tts = {}
+
+    def _tts():
+        try:
+            tts["r"] = word_times(text, voice, rate, str(workdir / f"{jid[:8]}_probe.mp3"), keep=True)
+        except Exception as e:
+            tts["e"] = e
+    tts_t = threading.Thread(target=_tts, daemon=True); tts_t.start()
     if pr:
         lines = sp.split_shots(lines, pr)[:60]
     log(f"director: planning {len(lines)} shots"); P(9)
@@ -562,10 +578,32 @@ def direct(jid, topic, script, secs, voice, rate, aspect, workdir, log=print, pr
                 pass
             P(18 + int(2 * (i + 1) / len(lines)))
         log(f"director: AI images for {sum(1 for a in ai if a)}/{len(lines)} shots via {', '.join(sorted(provs)) or 'none'}")
-    words, total = word_times(text, voice, rate, str(workdir / f"{jid[:8]}_probe.mp3"))
+    tts_t.join()
+    if "e" in tts:
+        raise tts["e"]
+    words, total, sub_maker = tts["r"]
     durs = sentence_durations(lines, words, total)
     XF = 0.4
     fades = fade_plan(lines, durs, XF) if crossfade else [False] * len(lines)
+    if defer:
+        pc, rep = [], []
+        for i, (l, s, p, d) in enumerate(zip(lines, shots, picks, durs)):
+            dur = round(d + (XF if fades[i] else 0), 3)
+            if ai[i]:
+                pc.append({"path": ai[i]["path"], "dur": dur, "still": not ai[i].get("video"), "kb": i, "zoom": True,
+                           "anim": ai_style == "stick", "fade": fades[i]})
+                rep.append({"line": l, "visual": "AI", "prompt": ai[i]["prompt"], "provider": ai[i]["provider"], "score": ai[i].get("score"),
+                            "tries": ai[i].get("tries", 1), "backup": ai[i].get("backup", False), "dur": round(d, 2),
+                            "characters": (aimeta.get("chars") or [[]] * 99)[i] if i < len(aimeta.get("chars") or []) else []})
+            elif p:
+                pc.append({"url": p["url"], "dur": dur, "still": False, "kb": i, "zoom": i % 2 == 0, "anim": False, "fade": fades[i]})
+                rep.append({"line": l, "visual": s.get("visual"), "queries": s.get("queries"), "pick": p.get("id"), "q": p.get("q"),
+                            "score": p.get("score"), "why": p.get("why"), "dur": round(d, 2)})
+        log("director: cutting clips")
+        return {"script": text, "clips": [], "plan": {"W": W, "H": H, "look": look, "xf": XF, "clips": pc},
+                "audio": str(workdir / f"{jid[:8]}_probe.mp3"), "sub_maker": sub_maker, "clip_max": math.ceil(max(durs)) + 1,
+                "look": look, "report": rep, "ai": aimeta, "providers": sorted(provs), "draft": sc["draft"],
+                "critique": sc["critique"], "hook": [sc["hook_before"], sc["hook_after"]]}
     log("director: cutting clips")
     clips, rep, cfade = [], [], []
     for i, (l, s, p, d) in enumerate(zip(lines, shots, picks, durs)):

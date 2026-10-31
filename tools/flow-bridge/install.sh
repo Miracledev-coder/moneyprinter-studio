@@ -17,6 +17,18 @@ echo "3/4  Installing the browser engine (one-time, ~150 MB)…"
 "$HOME/.local/share/uv/tools/gflow-cli/bin/playwright" install chromium 2>/dev/null || uv tool run --from gflow-cli playwright install chromium || echo "⚠️  Browser engine download failed; gflow will use your installed Google Chrome instead."
 echo "4/4  Installing flow-bridge…"
 curl -fsSL "$RAW/flow_bridge.py" -o "$D/flow_bridge.py" || fail "Could not download flow-bridge. Check your internet connection and try again."
+if [ "$(uname)" = Darwin ]; then
+  echo "     + ffmpeg for fast rendering on this Mac (static build from evermeet.cx, one-time, ~25 MB)…"
+  mkdir -p "$D/bin"
+  if ! "$D/bin/ffmpeg" -hide_banner -encoders 2>/dev/null | grep -q h264_videotoolbox; then
+    rm -f "$D/bin/ffmpeg" "$D/ffmpeg.zip"
+    if curl -fsSL --retry 3 "https://evermeet.cx/ffmpeg/getrelease/zip" -o "$D/ffmpeg.zip" && ditto -x -k "$D/ffmpeg.zip" "$D/bin" 2>/dev/null; then
+      chmod +x "$D/bin/ffmpeg"; xattr -d com.apple.quarantine "$D/bin/ffmpeg" 2>/dev/null || true
+    fi
+    rm -f "$D/ffmpeg.zip"
+    "$D/bin/ffmpeg" -hide_banner -version >/dev/null 2>&1 || { rm -f "$D/bin/ffmpeg"; echo "⚠️  ffmpeg download failed: Studio will keep rendering on the server (run the installer again later)."; }
+  fi
+fi
 printf '#!/bin/sh\nexec uv run --no-project --python 3.12 "$HOME/.flow-bridge/flow_bridge.py" "$@"\n' > "$B/flow-bridge"
 chmod +x "$B/flow-bridge"
 for rc in "$HOME/.zshrc" "$HOME/.bash_profile"; do grep -q '.local/bin' "$rc" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$rc"; done

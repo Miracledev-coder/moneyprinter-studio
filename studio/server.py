@@ -259,6 +259,8 @@ def set_session(r, u, remember):
 
 sys.path.insert(0, str(Path(__file__).parent))
 import scenes as scn  # noqa: E402
+import macrender as _mr  # noqa: E402
+from app.config import config  # noqa: E402
 
 
 _CANCEL = set()  # job ids the owner/admin stopped ("Stop generation")
@@ -342,11 +344,17 @@ def render(jid, req, dest):
                                     ai_style=aiv_norm(req.get("ai_style")),
                                     ai_prompts=[clean_text(x, 300) for x in (req.get("ai_prompts") or [])][:40] or None,
                                     keep_script=bool(req.get("keep_script")), chars=chars_for(req), preset=preset_of(req),
-                                    free_ai=is_admin(req.get("_user", "")),
+                                    free_ai=is_admin(req.get("_user", "")), defer=_fast_ok(req),
                                     flow=flow_runner(req.get("_user", ""), jid, req) if (req.get("_reuse_flow") or flow_engine(req.get("_user", ""), req)) else None)
                 if jid in jobs:
                     jobs[jid]["dprog"], jobs[jid]["stage"] = 30, "Voice, subtitles & final render"
                     jobs[jid]["visuals"] = d.get("providers") or []
+                if d.get("plan") and d["plan"]["clips"]:
+                    req["_director"] = {k: d[k] for k in ("look", "report", "critique", "hook", "draft")}
+                    if jid in jobs:
+                        jobs[jid]["script"] = d["script"]
+                    _fast_compose(jid, req, d, dest)
+                    return d["script"]
                 if len(d["clips"]) >= 1:
                     req.update(script=d["script"], _local=d["clips"], _clipmax=d["clip_max"])
                     req["_director"] = {k: d[k] for k in ("look", "report", "critique", "hook", "draft")}
@@ -389,6 +397,70 @@ def render(jid, req, dest):
             import ctypes; ctypes.CDLL("libc.so.6").malloc_trim(0)
         except Exception:
             pass
+
+
+def _fast_ok(req):
+    """fastrender path (Mac or server): needs Edge-style word timings for subtitles; FAST_RENDER=0 restores the old pipeline."""
+    if os.environ.get("FAST_RENDER", "1") == "0":
+        return False
+    prov = (config.app.get("subtitle_provider", "edge") or "").strip().lower()
+    return prov == "edge" or not req.get("subtitles", True)
+
+
+def _fast_compose(jid, req, d, dest):
+    """Final compose of a directed Short in one ffmpeg pass: on the user's Mac when its helper is online, else here."""
+    import macrender
+    t0 = time.time()
+    tm_ = jobs.get(jid, {}).setdefault("timings", {}) if jid in jobs else {}
+    if jid in jobs and jobs[jid].get("started"):
+        tm_["director_s"] = round(t0 - jobs[jid]["started"], 1)
+    params = make_params(dict(req, script=d["script"]))
+    wd = Path(utils.task_dir(jid)) / "fast"
+    spec, files = macrender.prepare(d["plan"], params, wd, d["audio"], d.get("sub_maker"), d["script"])
+    tm_["prepare_s"] = round(time.time() - t0, 1)
+    user = req.get("_user", "")
+
+    def prog(pct, msg):
+        if jid in jobs:
+            jobs[jid]["dprog"] = max(30 + int(pct * 0.7), int(jobs[jid].get("dprog") or 0))
+            if msg:
+                jobs[jid]["stage"] = msg + " (on your Mac)"
+    t1 = time.time()
+    if jid in jobs:
+        jobs[jid]["stage"] = "Sending the render to your Mac" if macrender.helper_ready(user) else "Cutting clips"
+    try:
+        mt = macrender.dispatch(user, jid, spec, files, str(wd), dest, cancel=lambda: _stopped(jid, req), progress=prog,
+                                hint=str(jobs.get(jid, {}).get("flow") or ""))
+        tm_.update(render_s=round(time.time() - t1, 1), mac=mt)
+        if jid in jobs:
+            jobs[jid].update(renderer="mac", notice="Rendered on your Mac")
+        return
+    except macrender.fastrender.Cancelled:
+        raise Stopped()
+    except macrender.Fallback as e:
+        print("mac render:", str(e)[:200], "- rendering on the server", flush=True)
+        tm_["mac_wait_s"] = round(time.time() - t1, 1)
+    _chk(jid, req)
+    macrender.stage_local(files, wd)
+    if jid in jobs:
+        jobs[jid]["stage"] = "Cutting clips"
+
+    def sprog(pct, msg):
+        if jid in jobs:
+            jobs[jid]["dprog"] = max(30 + int(pct * 0.7), int(jobs[jid].get("dprog") or 0))
+            if msg:
+                jobs[jid]["stage"] = msg
+    t2 = time.time()
+    try:
+        r = macrender.fastrender.render(spec, str(wd), str(dest), ffmpeg="ffmpeg", encoder="libx264",
+                                        workers=int(os.environ.get("FAST_RENDER_WORKERS", min(2, os.cpu_count() or 1))),
+                                        threads=os.environ.get("MPT_FFMPEG_THREADS", "1"), cancel=lambda: _stopped(jid, req),
+                                        progress=sprog)
+    except macrender.fastrender.Cancelled:
+        raise Stopped()
+    tm_.update(render_s=round(time.time() - t2, 1), server=r)
+    if jid in jobs:
+        jobs[jid].update(renderer="server", notice="Rendered on server")
 
 
 def run_long(lid, j):
@@ -1083,14 +1155,14 @@ def status(jid: str, req: Request):
     j = jobs.get(jid)
     if not j or current_user(req) != j.get("user"):
         return JSONResponse({"error": "not found"}, 404)
-    out = {k: j.get(k) for k in ("status", "error", "elapsed", "script")}
+    out = {k: j.get(k) for k in ("status", "error", "elapsed", "script", "renderer", "timings")}
     if j["status"] == "queued":
         out["ahead"] = sum(1 for k, x in jobs.items() if x["status"] in ("queued", "running") and x["created"] < j["created"])
     if j["status"] == "running":
         t = sm.state.get_task(jid) or {}
         mp = int(t.get("progress") or 0)
         dp = int(j.get("dprog") or 0)
-        out["progress"] = min(99, (30 + mp * 70 // 100) if dp >= 30 else max(dp, mp if not dp else 0))
+        out["progress"] = min(99, max(dp, 30 + mp * 70 // 100) if dp >= 30 else max(dp, mp if not dp else 0))
         out["stage"] = j.get("stage", "")
         out["notice"] = j.get("notice", "")
         out["flow"] = j.get("flow", "")
@@ -1206,7 +1278,7 @@ def history(req: Request):
     for k, j in sorted(jobs.items(), key=lambda kv: -kv[1]["created"]):
         if j.get("user") != u:
             continue
-        d = {m: j.get(m) for m in ("status", "title", "aspect", "voice", "elapsed", "error", "part", "yt", "kind")}
+        d = {m: j.get(m) for m in ("status", "title", "aspect", "voice", "elapsed", "error", "part", "yt", "kind", "renderer")}
         d["drive"] = bool(j.get("drive"))
         d["id"] = k
         if j.get("flow") and j["status"] == "done":
@@ -1919,7 +1991,7 @@ def _online(u):
 
 
 def flow_online(u):
-    return time.time() - _FLOW_SEEN.get(u, 0) < 120
+    return time.time() - _FLOW_SEEN.get(u, 0) < 120 or _mr.helper_ready(u)
 
 
 def flow_engine(u, req):
@@ -2122,6 +2194,9 @@ def _bad_key(req):
     if getattr(req.state, "flow_revoked", False):
         return JSONResponse({"error": "This computer was unlinked or paired again elsewhere.", "revoked": True}, 401)
     return JSONResponse({"error": "bad bridge key"}, 403)
+
+
+_mr.install(app, _bridge_user, _bad_key)
 
 
 @app.post("/api/flow/key")
