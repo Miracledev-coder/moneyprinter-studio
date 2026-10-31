@@ -128,6 +128,7 @@ DRIFT = 23  # gflow-cli exit code: Flow's page changed (selector drift) -> stop 
 
 
 CTX = {}  # base + key while connected, so the driver can ask whether a job was stopped
+RAN = {}  # (job, scene n) -> highest attempt this helper has started
 
 
 def job_open(jid):
@@ -135,40 +136,107 @@ def job_open(jid):
     if not CTX:
         return True
     try:
-        return any(j["job"] == jid for j in ping(CTX["base"], CTX["key"]).get("jobs", []))
+        js = ping(CTX["base"], CTX["key"]).get("jobs", []); _live(js)
+        return any(j["job"] == jid for j in js)
     except Exception:
         return True
 
 
 STATUS = {"state": "idle", "msg": ""}
-TASK_TIMEOUT = int(os.environ.get("FLOW_TASK_TIMEOUT", 600))  # hard limit per Flow generation
+TASK_TIMEOUT = int(os.environ.get("FLOW_TASK_TIMEOUT", 600))  # hard limit per Flow generation (batch runs)
+KIND_TIMEOUT = {"image": int(os.environ.get("FLOW_IMAGE_TIMEOUT", 240)), "video": int(os.environ.get("FLOW_VIDEO_TIMEOUT", 480))}
+LIVE = {}  # (job, scene n) -> {"attempt": n, "filled": bool, "gave_up": bool} from Studio's latest heartbeat reply
 
 
-def hstat(state, msg):
-    """What the helper is doing right now; sent with every heartbeat so Studio's progress panel can show it."""
-    STATUS.update(state=state, msg=msg[:200], at=int(time.time()))
+def hstat(state, msg, job=None, scene=None):
+    """What the helper is doing right now; sent with every heartbeat so Studio's progress panel can show it.
+    job + scene tell Studio which generation is running, so it can tell a slow scene from a stuck one."""
+    if (job, scene) != (STATUS.get("job"), STATUS.get("scene")) or state != STATUS.get("state"):
+        STATUS["since"] = int(time.time())
+    STATUS.update(state=state, msg=msg[:200], at=int(time.time()), job=job, scene=scene)
 
 
-def _run(cmd, folder):
-    """Run gflow, echo its output live, keep the tail in r.out so failures can be classified."""
-    tail = []
+def _live(jobs):
+    for jb in jobs or []:
+        for s_ in jb.get("scenes") or []:
+            LIVE[(jb["job"], s_["n"])] = {"attempt": int(s_.get("attempt") or 1), "filled": bool(s_.get("filled")),
+                                         "gave_up": bool(s_.get("gave_up"))}
+
+
+def report_fail(job, n, attempt, err):
+    """Tell Studio at once that scene n failed on this computer, so it re-queues it (same model) without waiting."""
+    if not CTX:
+        return {}
+    print(f"[auto] reporting scene {n} attempt {attempt} failure to Studio: {str(err)[:160]}", flush=True)
     try:
-        pr = subprocess.Popen(cmd, cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
-        t0 = time.time()
+        r = json.loads(_api(CTX["base"], CTX["key"], "/api/flow/scene-fail",
+                            {"job": job, "scene": n, "attempt": attempt, "error": str(err)[-300:]}, timeout=30))
+        print(f"[auto] Studio: scene {n} -> {r.get('action')} (attempt {r.get('attempt')})", flush=True)
+        return r
+    except Exception as e:
+        print(f"[auto] could not report the failure ({type(e).__name__}); Studio will notice the stall itself", flush=True)
+        return {}
+
+
+def _media_store(job, n, ids=None):
+    """Flow media ids seen per job/scene, so a retry first re-downloads an already generated (billed) result."""
+    f = STATE / "scene-media.json"
+    try:
+        d = json.loads(f.read_text()) if f.exists() else {}
+    except Exception:
+        d = {}
+    k = f"{job}:{n}"
+    if ids:
+        d[k] = list(dict.fromkeys((d.get(k) or []) + list(ids)))[-6:]
+        d = dict(list(d.items())[-300:]); STATE.mkdir(exist_ok=True); f.write_text(json.dumps(d))
+    return d.get(k) or []
+
+
+def _run(cmd, folder, timeout=None, abort=None):
+    """Run gflow, echo its output live, keep the tail in r.out so failures can be classified.
+    A watchdog kills it after `timeout` s even when gflow hangs silently (no output), or when abort() turns True
+    (Studio already got the scene / re-queued it). Exit 124 = timed out, 125 = aborted."""
+    import threading
+    timeout = timeout or TASK_TIMEOUT
+    tail, why = [], []
+    pr = subprocess.Popen(cmd, cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+    t0, done = time.time(), threading.Event()
+
+    def dog():
+        while not done.wait(5):
+            if time.time() - t0 > timeout:
+                why.append(124)
+            elif abort:
+                try:
+                    if abort():
+                        why.append(125)
+                except Exception:
+                    pass
+            if why:
+                try:
+                    pr.kill()
+                except Exception:
+                    pass
+                return
+    threading.Thread(target=dog, daemon=True).start()
+    try:
         for line in pr.stdout:
             print(line, end="", flush=True); tail.append(line); del tail[:-300]
-            if time.time() - t0 > TASK_TIMEOUT:
-                raise subprocess.TimeoutExpired(cmd, TASK_TIMEOUT)
-        pr.wait(timeout=max(5, TASK_TIMEOUT - (time.time() - t0)))
-        r = subprocess.CompletedProcess(cmd, pr.returncode)
-    except subprocess.TimeoutExpired:
+        pr.wait(timeout=30)
+    except Exception:
         try:
             pr.kill()
         except Exception:
             pass
-        print(f"[auto] Flow did not finish this generation within {TASK_TIMEOUT // 60} min; giving up on it (it stays open for a manual upload).", flush=True)
-        hstat("error", f"A Flow generation timed out after {TASK_TIMEOUT // 60} min")
-        r = subprocess.CompletedProcess(cmd, 124)
+    done.set()
+    rc = why[0] if why else pr.returncode
+    if rc == 124:
+        print(f"[auto] Flow did not finish this generation within {timeout} s; stopping it.", flush=True)
+        hstat("error", f"A Flow generation timed out after {timeout} s")
+        tail.append(f"\n[flow-bridge] generation timed out after {timeout} s\n")
+    elif rc == 125:
+        print("[auto] Studio no longer needs this generation (scene filled or re-queued); stopped it.", flush=True)
+    r = subprocess.CompletedProcess(cmd, rc if rc is not None else 1)
     r.out = "".join(tail)
     return r
 
@@ -208,7 +276,8 @@ def recover(gflow, mid, out, tries=4):
             dst = out.with_suffix(got[-1].suffix); shutil.move(str(got[-1]), str(dst)); return dst
         if "exit 11" in r.out or "Video only" in r.out:
             break  # gflow can only re-fetch videos by id
-        time.sleep((20, 60, 120, 180)[min(i, 3)])
+        if i + 1 < tries:
+            time.sleep((20, 60, 120, 180)[min(i, 3)])
     return None
 
 
@@ -328,19 +397,46 @@ def drive(job, folder, cap, pace=None):
         cf.write_text(str(used))
         print(f"[auto] batch done in {int(time.time() - t0)} s: {sum(1 for s in batch if s.get('filled'))}/{len(batch)} images"
               + ("" if all(s.get("filled") for s in batch) else "; the rest are retried one by one"), flush=True)
-    for sc in job["scenes"]:
+    if CTX:  # images the batch could not make go back to Studio as failed attempt 1, so they are retried (attempt 2)
+        for sc in batch:
+            if not sc.get("filled") and int(sc.get("attempt") or 1) == 1 and len(batch) > 1 and os.environ.get("FLOW_BATCH", "1") != "0":
+                rr = report_fail(job["job"], sc["n"], 1, "batch generation produced no file")
+                if rr.get("action") == "retry":
+                    sc["attempt"] = rr["attempt"]
+    todo = [sc for sc in job["scenes"] if not sc.get("filled") and not sc.get("gave_up")]
+    while todo:
+        sc = todo.pop(0)
         if not job_open(job["job"]):
             print(f"[auto] Job {job['job'][:8]} was stopped in Studio; skipping its remaining scenes."); job["stopped"] = True; return True
         if used >= cap:
             print(f"[auto] Daily cap of {cap} Flow generations reached. The rest can be done by hand or tomorrow."); return True
-        if sc.get("filled"):
+        lv = LIVE.get((job["job"], sc["n"])) or {}
+        if sc.get("filled") or lv.get("filled") or lv.get("gave_up"):
             continue
+        attempt = max(int(sc.get("attempt") or 1), int(lv.get("attempt") or 1))
+        sc["attempt"] = attempt
+        RAN[(job["job"], sc["n"])] = attempt
         kind, model = sc.get("type", "video"), sc.get("model", "")
         a = sc.get("advanced") or {}
         alias = GFLOW_MODELS.get(model, "")
         my = [r for r in refs if any(c.lower() in r.lower() for c in sc.get("characters") or [])] or (refs if sc.get("characters") else [])
         ext = ".png" if kind == "image" else ".mp4"
         out = Path(folder) / f"{sc['n']:02d}_scene{ext}"
+        tlim = KIND_TIMEOUT.get(kind, TASK_TIMEOUT)
+
+        def gone(_k=(job["job"], sc["n"]), _a=attempt):  # Studio got this scene meanwhile, or re-queued it past this attempt
+            lv_ = LIVE.get(_k) or {}
+            return lv_.get("filled") or lv_.get("gave_up") or int(lv_.get("attempt") or 1) > _a
+        if attempt > 1:  # retry: first fetch an already generated result from the Flow project (no credits)
+            got = None
+            for mid in _media_store(job["job"], sc["n"]):
+                hstat("working", f"Scene {sc['n']}: re-downloading the earlier Flow result", job["job"], sc["n"])
+                got = recover(gflow, mid, out, tries=1)
+                if got:
+                    break
+            if got:
+                print(f"[auto] scene {sc['n']}: re-downloaded the earlier result from the '{PROJECT_TITLE}' project (no credits)", flush=True)
+                os.utime(got, None); continue
         if kind == "image":
             cmd = [gflow, "image", "i2i" if my else "t2i", sc["prompt"], "--aspect", job["aspect"], "-n", "1"]
             for r in my[:3]:
@@ -362,68 +458,74 @@ def drive(job, folder, cap, pace=None):
             cmd += ["--project", proj]
         if alias:
             cmd += ["--model", alias]
-        hstat("working", f"Generating scene {sc['n']}/{len(job['scenes'])}: {kind} · {model or 'Flow default'} · {int(time.time() - t0)} s so far")
-        print(f"[auto] scene {sc['n']}: {kind} · {model or 'Flow default'}{' · ' + str(len(my)) + ' character ref(s)' if my else ''} …", flush=True)
-        r = _run(cmd, folder)
+        hstat("working", f"Generating scene {sc['n']}/{len(job['scenes'])}: {kind} · {model or 'Flow default'} · attempt {attempt}",
+              job["job"], sc["n"])
+        print(f"[auto] scene {sc['n']}: {kind} · {model or 'Flow default'} · attempt {attempt}{' · ' + str(len(my)) + ' character ref(s)' if my else ''} …", flush=True)
+        if out.exists():
+            out.unlink()
+        r = _run(cmd, folder, tlim, gone)
+        _media_store(job["job"], sc["n"], [m for m in media_ids(r.out) if m != (proj or "").lower()])
         if r.returncode == DRIFT:
             print("[auto] Flow's page changed and gflow-cli can't find its buttons (exit 23). Stopping automation;"
-                  " finish the remaining scenes by hand (prompts.txt) or update:  uv tool upgrade gflow-cli"); return False
+                  " finish the remaining scenes by hand (prompts.txt) or update:  uv tool upgrade gflow-cli")
+            for x in [sc] + todo:
+                report_fail(job["job"], x["n"], int(x.get("attempt") or 1), "gflow-cli selector drift (exit 23)")
+            return False
+        if r.returncode == 125:
+            continue
         if r.returncode and proj and project_gone(r.out) and not download_failed(r.out):
             print(f"[auto] the '{PROJECT_TITLE}' Flow project is gone; creating it again")
             np = flow_project(gflow, fresh=True)
             if np:
-                cmd[cmd.index("--project") + 1] = np; r = _run(cmd, folder)
-        if r.returncode and download_failed(r.out):  # generated + billed; only the download failed: NEVER regenerate
+                cmd[cmd.index("--project") + 1] = np; r = _run(cmd, folder, tlim, gone)
+        if r.returncode and download_failed(r.out):  # generated + billed; only the download failed: re-download first
             ids, got = media_ids(r.out), None
             print(f"[auto] scene {sc['n']} was generated but its download failed; fetching it again by id (no credits)", flush=True)
             for mid in ids:
-                got = recover(gflow, mid, out)
+                got = recover(gflow, mid, out, tries=2 if CTX else 4)
                 if got:
                     break
             tries = 0
-            while not got and tries < 2 and used + 1 < cap and job_open(job["job"]):  # re-download failed: regenerate, SAME model
+            while not CTX and not got and tries < 2 and used + 1 < cap and job_open(job["job"]):  # manual mode: regenerate here
                 tries += 1; used += 1; cf.write_text(str(used))
                 print(f"[auto] scene {sc['n']}: re-download failed; regenerating with the same model ({tries}/2)", flush=True)
-                hstat("working", f"Scene {sc['n']}: regenerating ({tries}/2) with {model or 'Flow default'}")
                 time.sleep(random.randint(*pace))
-                r = _run(cmd, folder)
+                r = _run(cmd, folder, tlim)
                 if out.exists() and not r.returncode:
                     got = out
-                elif download_failed(r.out):
-                    for mid in media_ids(r.out):
-                        got = recover(gflow, mid, out) if kind != "image" else None
-                        if got:
-                            break
-                    ids = media_ids(r.out) or ids
             if got:
                 r = subprocess.CompletedProcess(cmd, 0); r.out = ""
             else:
-                hstat("error", f"Scene {sc['n']} failed after re-download + 2 regenerations. Use 'Regenerate scene' in Studio.")
                 _pending(_pending() + [{"job": job["job"], "scene": sc["n"], "media_id": m, "out": str(out)} for m in ids[:1]])
-                print(f"[auto] saved media id(s) {', '.join(m[:8] for m in ids) or '?'}; run  flow-bridge --recover  later (no credits)", flush=True)
         elif r.returncode and r.returncode not in (DRIFT, 124) and agent and not out.exists() and not model_rejected(r.out):
             print("[auto] Flow Agent instruction was not accepted on this account; retrying without it")
             i = cmd.index("-i"); cmd = cmd[:i] + cmd[i + 2:]
-            r = _run(cmd, folder)
+            r = _run(cmd, folder, tlim, gone)
         if r.returncode and alias and model_rejected(r.out):
             print(f"[auto] '{alias}' was not accepted; retrying with Flow's default model")
-            i = cmd.index("--model"); r = _run(cmd[:i] + cmd[i + 2:], folder)
+            i = cmd.index("--model"); r = _run(cmd[:i] + cmd[i + 2:], folder, tlim, gone)
         if not out.exists() and kind == "image" and my:  # i2i wrote into tmp: move it in with the scene number
             new = sorted((STATE / "tmp").glob("*.*"), key=lambda p: p.stat().st_mtime)
             if new:
                 shutil.move(str(new[-1]), str(out.with_suffix(new[-1].suffix)))
+        have = out.exists() or any(Path(folder).glob(out.stem + ".*"))
         k = 0
-        while r.returncode and r.returncode not in (DRIFT,) and not out.exists() and not download_failed(r.out) \
+        while not CTX and r.returncode and r.returncode not in (DRIFT,) and not have and not download_failed(r.out) \
                 and not model_rejected(r.out) and k < 2 and used + 1 < cap and job_open(job["job"]):
             k += 1; used += 1
             print(f"[auto] scene {sc['n']} failed (exit {r.returncode}); regenerating with the same model ({k}/2)", flush=True)
-            hstat("working", f"Scene {sc['n']}: retry {k}/2 with {model or 'Flow default'}")
-            time.sleep(random.randint(*pace)); r = _run(cmd, folder)
+            time.sleep(random.randint(*pace)); r = _run(cmd, folder, tlim); have = out.exists()
         used += 1; cf.write_text(str(used))
-        if r.returncode and not out.exists():
-            hstat("error", f"Scene {sc['n']} failed after retries. Use 'Regenerate scene' in Studio.")
-            print(f"[auto] scene {sc['n']} failed (exit {r.returncode}); it stays open for a manual upload.")
-        if not any(not x.get("filled") and x["n"] > sc["n"] for x in job["scenes"]):
+        if not have and r.returncode != 125:
+            err = (f"timed out after {tlim} s" if r.returncode == 124 else f"exit {r.returncode}: "
+                   + " | ".join(x.strip() for x in (r.out or "").strip().splitlines()[-3:]))
+            hstat("error", f"Scene {sc['n']} attempt {attempt} failed: {err[:120]}")
+            print(f"[auto] scene {sc['n']} attempt {attempt} failed ({err[:200]})", flush=True)
+            rr = report_fail(job["job"], sc["n"], attempt, err)
+            if rr.get("action") == "retry":  # Studio re-queued it: try again after the other scenes, same model
+                sc["attempt"] = rr["attempt"]; todo.append(sc)
+                LIVE.setdefault((job["job"], sc["n"]), {}).update(attempt=rr["attempt"])
+        if not todo:
             continue
         wait = random.randint(*pace)
         hstat("pacing", f"Scene {sc['n']} done · next in {wait}s (human pace)")
@@ -436,7 +538,7 @@ KEYF = Path.home() / ".flow-bridge" / "key"
 BASEF = Path.home() / ".flow-bridge" / "base"
 LOGF = Path.home() / ".flow-bridge" / "helper.log"
 LABEL = os.environ.get("FLOW_ACCOUNT", "")
-VERSION = "2026.10.31.8"
+VERSION = "2026.10.31.9"
 DEFAULT_BASE = "https://moneyprinter-studio.onrender.com"
 RAW = "https://raw.githubusercontent.com/Miracledev-coder/moneyprinter-studio/main/tools/flow-bridge/flow_bridge.py"
 AGENT = "com.calmcraze.flowbridge"
@@ -977,28 +1079,42 @@ def watch(job, token, folder, use_drive, cap, base=None, key=None):
     total = len(job["scenes"])
     print(f"Watching {folder} for {total} Flow files for job {job['job'][:8]} …")
     start, seen, done, last_ping = time.time() - 5, set(), sum(1 for s in job["scenes"] if s.get("filled")), 0
+    import threading
+    dr = None
     if use_drive:
-        import threading
-        threading.Thread(target=drive, args=(job, folder, cap), daemon=True).start()
+        dr = threading.Thread(target=drive, args=(job, folder, cap), daemon=True); dr.start()
+    _live([job])
     while done < total and not job.get("stopped"):
         if base and time.time() - last_ping > 20:
             try:
                 last_ping = time.time()
-                if not any(x["job"] == job["job"] for x in ping(base, key).get("jobs", [])):
+                js = ping(base, key).get("jobs", []); _live(js)
+                me = next((x for x in js if x["job"] == job["job"]), None)
+                if not me:
                     print(f"Job {job['job'][:8]} was stopped or finished in Studio."); return
+                if use_drive and dr and not dr.is_alive():  # Studio re-queued a stalled/failed scene: run it again, same model
+                    again = [s for s in me["scenes"] if not s.get("filled") and not s.get("gave_up")
+                             and int(s.get("attempt") or 1) > RAN.get((job["job"], s["n"]), 0)]
+                    if again:
+                        print(f"[auto] Studio re-queued scene(s) {', '.join(str(s['n']) for s in again)} "
+                              f"(attempt {', '.join(str(s.get('attempt')) for s in again)}); retrying with the same model", flush=True)
+                        j2 = dict(job, scenes=[dict(s, filled=s not in again) for s in me["scenes"]])
+                        dr = threading.Thread(target=drive, args=(j2, folder, cap), daemon=True); dr.start()
             except Exception:
                 pass
-        new = sorted((p for p in folder.rglob("*") if p.suffix.lower() in MEDIA and p not in seen
+        new = sorted((p for p in folder.rglob("*") if p.suffix.lower() in MEDIA and (p, p.stat().st_mtime) not in seen
                       and p.stat().st_mtime >= start and not p.name.startswith((".", "ref-")) and p.name != "prompts.txt"), key=lambda p: p.stat().st_mtime)
         for p in new:
-            seen.add(p)
             if not stable(p):
                 continue
+            seen.add((p, p.stat().st_mtime))  # a regenerated file with the same name (new mtime) is uploaded again
             r = upload(job["upload_url"], job["job"], token, p, scene_from_name(p.name, total))
             if r.get("ok"):
                 done = r["done"]; print(f"✓ {p.name} → scene {r['scene']}  ({done}/{total})")
             else:
                 print(f"✗ {p.name}: {r.get('error')}")
+                if not r.get("code") or r.get("code") >= 500:  # network / server hiccup: upload it again next round
+                    seen.discard((p, p.stat().st_mtime))
                 if r.get("code") == 403:
                     sys.exit("Token rejected. Copy it again from 'Send to Flow'.")
                 if r.get("code") == 429:

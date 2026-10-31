@@ -560,7 +560,9 @@ def direct(jid, topic, script, secs, voice, rate, aspect, workdir, log=print, pr
                     raise
                 log(f"director: Flow bridge failed {type(e).__name__}")
             if len(fl) < len(lines):
-                log(f"director: Using backup {'images' if free_ai else 'stock footage'} for {len(lines) - len(fl)} scene(s) (Flow not available)")
+                why = getattr(flow, "reasons", None) or {}
+                log(f"director: Using backup {'images' if free_ai else 'stock footage'} for {len(lines) - len(fl)} scene(s) ("
+                    + ("; ".join(f"scene {i + 1}: {why[i]}" for i in sorted(why) if i not in fl) or "Flow not available") + ")")
         for i in range(len(lines)):
             if i in fl:
                 ai[i] = {"path": fl[i]["path"], "prompt": aip[i], "provider": fl[i]["model"], "video": fl[i].get("video"),
@@ -573,6 +575,8 @@ def direct(jid, topic, script, secs, voice, rate, aspect, workdir, log=print, pr
             try:
                 path, prov, pr, scv, tries = aiv.generate_verified(aip[i], lines[i], W, H, seed, gem, log=log)
                 ai[i] = {"path": path, "prompt": pr, "provider": prov, "score": scv, "tries": len(tries), "backup": bool(flow)}
+                if flow:
+                    log(f"director: scene {i + 1} backup image via {prov} (score {scv})")
                 provs.add(prov)
             except Exception:
                 pass

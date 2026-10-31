@@ -549,6 +549,16 @@ def worker():
             j.update(status="error", error=msg[:300])
         finally:
             j["elapsed"] = round(time.time() - j["started"])
+            try:
+                if j.get("status") == "done":
+                    vd = scn.probe(j["video"])[2] if j.get("video") and Path(j["video"]).exists() else None
+                    tm_ = j.get("timings") or {}
+                    print(f"job {jid[:8]} done mode={j.get('kind') or 'short'} topic=\"{str((j.get('req') or {}).get('topic') or j.get('title') or '')[:60]}\""
+                          f" video={round(vd, 1) if vd else '?'}s rendered={j.get('renderer') or 'server'}"
+                          f" flow={'yes' if j.get('flow') else 'no'} director={tm_.get('director_s', '?')}s render={tm_.get('render_s', '?')}s"
+                          f" total={j['elapsed']}s", flush=True)
+            except Exception:
+                pass
             busy = {k[:8] for k, v in jobs.items() if v.get("kind") == "long" and v["status"] in ("queued", "running")}
             pending = {Path(v["video"]).name for v in jobs.values() if v.get("video") and not v.get("drive")} if gd.configured() else set()
             old = [f for f in sorted(OUT_DIR.glob("*.mp4"), key=os.path.getmtime) if f.name[:8] not in busy and f.name not in pending][:-KEEP_VIDEOS]
@@ -1574,9 +1584,23 @@ def _fload(fid):
         return None
 
 
+_FLOCK = threading.RLock()  # Flow job files are read-modify-written by the runner, uploads, pings and fail reports
+
+
 def _fsave(j):
     FLOW_DIR.mkdir(parents=True, exist_ok=True)
-    _fpath(j["id"]).write_text(_json.dumps(j))
+    p = _fpath(j["id"]); tmp = p.with_name(p.name + f".{threading.get_ident()}.tmp")
+    tmp.write_text(_json.dumps(j)); os.replace(tmp, p)  # atomic: a concurrent _fload never sees a half-written file
+
+
+def _fupdate(fid, fn):
+    """Locked read-modify-write of one Flow job file; fn(j) mutates j and may return a value."""
+    with _FLOCK:
+        j = _fload(fid)
+        if not j:
+            return None, None
+        r = fn(j); _fsave(j)
+        return j, r
 
 
 @app.post("/api/flow/job")
@@ -2015,17 +2039,23 @@ def _prefs(u):
 
 
 def _flow_score(fid, i, user, upid):
+    """Gemini score of one Flow upload (videos: a frame is extracted first). Never raises; logs the full traceback."""
+    import traceback
     try:
-        import aivisuals as aiv, director
-        p = scn.upload_path(user, upid)
-        j = _fload(fid)
-        sc, crit, _ = aiv.verify(aiv._jpeg(p), j["texts"][i], j["prompts"][i], director.gem)
-        j = _fload(fid)
-        if j["filled"][i] and j["filled"][i].get("id") == upid:
-            j["filled"][i].update(score=sc, critique=crit); _fsave(j)
-        print(f"flow: job {fid[:8]} scene {i + 1} score {sc}/10 ({j['models'][i]})", flush=True)
-    except Exception as e:
-        print(f"flow: score failed {type(e).__name__}", flush=True)
+        import aivisuals as aiv, director, flowsched as fs
+        r = fs.score(_fload(fid), i, scn.upload_path(user, upid), aiv.verify, director.gem, log=lambda m: print(f"job {fid[:8]} " + m, flush=True))
+        if not r:
+            return
+        sc, crit = r
+
+        def put(j):
+            f = (j.get("filled") or [None] * (i + 1))[i]
+            if f and f.get("id") == upid:
+                f.update(score=sc, critique=crit)
+        j, _ = _fupdate(fid, put)
+        print(f"flow: job {fid[:8]} scene {i + 1} score {sc}/10 ({((j or {}).get('models') or [''] * (i + 1))[i]})", flush=True)
+    except Exception:
+        print("flow: score failed\n" + traceback.format_exc(), flush=True)
 
 
 def flow_runner(user, jid, req):
@@ -2086,47 +2116,81 @@ def flow_runner(user, jid, req):
         _fsave(j)
         if jid in jobs:
             jobs[jid]["flow"] = j["id"]
-        wait = int(os.environ.get("FLOW_WAIT", 900))
+        wait = int(os.environ.get("FLOW_WAIT", 900))  # hard cap for the whole Flow stage
+        import flowsched as fs
         t0 = time.time()
-        task_to = int(os.environ.get("FLOW_TASK_TIMEOUT", 720)) + 150  # per scene: helper's own limit + human-pace gap
         signin_to = int(os.environ.get("FLOW_SIGNIN_WAIT", 900))
-        last_got, last_t, signin_since, why = -1, time.time(), None, ""
-        paused = 0.0
+        signin_since, why, paused, last_got = None, "", 0.0, 0
+        tag = f"flow: job {jid[:8]}"
+        _fupdate(j["id"], lambda x: fs.init(x, t0))
+        print(f"{tag} start mode={(jobs.get(jid) or {}).get('kind') or 'short'} topic=\"{clean_text(req.get('topic'), 300)[:60]}\" scenes={n} flow={j['id'][:8]}", flush=True)
+        for i in range(n):
+            print(f"{tag} scene {i + 1}/{n} dispatched: {kinds[i]} · {j['models'][i]} · attempt 1/{fs.MAX_ATT}", flush=True)
         while time.time() - t0 - paused < wait:
-            j = _fload(j["id"])
-            got = sum(1 for x in j["filled"] if x)
-            if got != last_got:
-                last_got, last_t = got, time.time()
             h = _helper_msg(user)
+            wk = _HWORK.get(user)
+            wk = wk if wk and time.time() - wk[3] < 60 else None
+
+            def tick(x):
+                fs.note_progress(x, wk and wk[:3])
+                acts = []
+                for i, reason in fs.stalled(x, work=wk and wk[:3]):
+                    acts.append((i, reason) + fs.record_fail(x, i, reason))
+                return acts
+            jn, acts = _fupdate(j["id"], tick)
+            if not jn:
+                print(f"{tag} Flow job file vanished; using what arrived", flush=True); break
+            j = jn
+            for i, reason, act, k in acts or []:
+                if act == "retry":
+                    print(f"{tag} scene {i + 1} stalled ({reason}); re-queued attempt {k}/{fs.MAX_ATT} · {j['models'][i]}", flush=True)
+                elif act == "giveup":
+                    print(f"{tag} scene {i + 1} gave up after {k} attempt(s) ({reason}); will use a backup", flush=True)
+            got = sum(1 for x in j.get("filled") or [] if x)
+            if got != last_got:
+                last_got = got
             if jid in jobs:
-                jobs[jid]["stage"] = f"Waiting for Google Flow clips {got}/{n}" + (f" · Helper: {h[1]}" if h and h[1] else "")
+                retr = [str(i + 1) for i in fs.pending(j) if fs.att(j, i) > 1]
+                jobs[jid]["stage"] = (f"Waiting for Google Flow clips {got}/{n}" + (f" · retrying scene {', '.join(retr)}" if retr else "")
+                                      + (f" · Helper: {h[1]}" if h and h[1] else ""))
             if h and h[0] == "signin":
                 signin_since = signin_since or time.time()
                 if jid in jobs:
                     jobs[jid]["notice"] = "Flow isn't signed in on your Mac. Run flow-bridge --signin in Terminal; this video continues by itself once you're signed in."
                 if time.time() - signin_since > signin_to:
                     why = f"Google Flow isn't signed in on your Mac (waited {signin_to // 60} min). Run flow-bridge --signin, then generate again."; break
-                last_t = time.time(); paused += 5
+                _fupdate(j["id"], lambda x: x.update(prog_t=time.time())); paused += 5
             elif signin_since:
-                signin_since = None; last_t = time.time()
+                signin_since = None
                 if jid in jobs and str(jobs[jid].get("notice", "")).startswith("Flow isn't signed in"):
                     jobs[jid]["notice"] = ""
-            if got < n and time.time() - last_t > task_to:
-                why = f"Google Flow didn't deliver scene {got + 1} of {n} within {task_to // 60} min" + (f" (helper: {h[1]})" if h and h[1] else "") + "."; break
-            if got == n or j.get("failed") or not flow_online(user) or _stopped(jid, req):
+            if not fs.pending(j) or j.get("failed") or _stopped(jid, req):
+                break
+            if not flow_online(user):
+                print(f"{tag} helper offline (no heartbeat for 120 s); {len(fs.pending(j))} scene(s) go to backup", flush=True)
                 break
             time.sleep(5)
+        else:
+            print(f"{tag} FLOW_WAIT={wait}s hard cap reached; {len(fs.pending(j))} scene(s) go to backup", flush=True)
+        reasons = dict(j.get("gave") or {})
+        for i in fs.pending(j):
+            reasons[str(i)] = (("helper offline" if not flow_online(user) else f"FLOW_WAIT {wait}s cap reached")
+                               + (f"; last error: {(j.get('why') or {}).get(str(i))}" if (j.get("why") or {}).get(str(i)) else ""))
+        run.reasons = {int(k): v for k, v in reasons.items() if not j["filled"][int(k)]}
+        print(f"{tag} Flow stage done in {int(time.time() - t0)} s: {sum(1 for x in j['filled'] if x)}/{n} scenes"
+              + "".join(f"; scene {k + 1} missing ({v})" for k, v in sorted(run.reasons.items())), flush=True)
         if why:
-            j["closed"] = True; _fsave(j)
+            _fupdate(j["id"], lambda x: x.update(closed=True))
             e = RuntimeError(why); e.fatal = True; raise e
         out = {}
         for i, up in enumerate(j["filled"]):
             p = up and scn.upload_path(user, up["id"])
             if p:
                 out[i] = {"path": str(p), "model": up.get("model") or "Google Flow", "video": up.get("video"), "score": up.get("score")}
-        j["closed"] = True; _fsave(j)
+        _fupdate(j["id"], lambda x: x.update(closed=True))
         _chk(jid, req)
         return out
+    run.reasons = {}
     return run
 
 
@@ -2310,6 +2374,7 @@ async def flow_engine_set(req: Request):
 
 
 _HSTAT = {}  # user -> (state, message, when) reported by the helper
+_HWORK = {}  # user -> (flow job id, scene n, since, when): the generation the helper is running now
 
 
 def _helper_msg(u):
@@ -2336,6 +2401,13 @@ async def flow_ping(req: Request):
         hs = None
     if isinstance(hs, dict):
         _HSTAT[u] = (clean_text(hs.get("state"), 20), clean_text(hs.get("msg"), 200), time.time())
+        if hs.get("job") and hs.get("state") == "working":  # which scene the helper is generating right now (stall detection)
+            try:
+                _HWORK[u] = (str(hs["job"])[:40], int(hs.get("scene") or 0), float(hs.get("since") or time.time()), time.time())
+            except (TypeError, ValueError):
+                pass
+        else:
+            _HWORK.pop(u, None)
     lab = clean_text(req.headers.get("x-flow-account"), 80)
     if lab or time.time() - _fmeta(u).get("seen", 0) > 600:
         _fmeta(u, seen=time.time(), **({"label": lab} if lab else {}))
@@ -2352,6 +2424,7 @@ async def flow_ping(req: Request):
                             "references": [{"name": r, "url": "/char/" + r} for r in sorted({r for rs in (j["meta"].get("char_refs") or []) for r in rs})],
                             "scenes": [{"n": i + 1, "type": _kind(j, i), "model": j.get("models", [""] * 99)[i], "sentence": t,
                                         "prompt": _fprompt(j, i), "advanced": _sadv(j, i), "filled": bool(j["filled"][i]),
+                                        "attempt": int((j.get("att") or {}).get(str(i), 1)), "gave_up": str(i) in (j.get("gave") or {}),
                                         "characters": (j["meta"].get("chars") or [[]] * 99)[i] if i < len(j["meta"].get("chars") or []) else []} for i, t in enumerate(j["texts"])]})
     return {"user": u, "jobs": out}
 
@@ -2391,6 +2464,33 @@ async def flow_scene_set(fid: str, req: Request):
     return {"ok": True, "type": _kind(j, i), "model": j["models"][i], "prompt": _fprompt(j, i), "adv": _sadv(j, i)}
 
 
+@app.post("/api/flow/scene-fail")
+async def flow_scene_fail(req: Request):
+    """Helper reports a scene it could not deliver (error text or its own timeout): re-queue it at once with the same
+    model (attempt 2, 3), or give up so the render uses a backup. Same bridge-key auth as /api/flow/ping."""
+    u = _bridge_user(req)
+    if not u:
+        return _bad_key(req)
+    _online(u)
+    b = clean_body(await req.json(), 400)
+    j = _fload(str(b.get("job") or ""))
+    if not j or j.get("user") != u:
+        return JSONResponse({"error": "not found"}, 404)
+    try:
+        i = int(b.get("scene") or 0) - 1
+        at = int(b["attempt"]) if b.get("attempt") not in (None, "") else None
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "bad scene"}, 400)
+    if not 0 <= i < len(j["filled"]):
+        return JSONResponse({"error": "bad scene"}, 400)
+    import flowsched as fs
+    err = clean_text(b.get("error"), 300) or "unknown error"
+    j, (act, k) = _fupdate(j["id"], lambda x: fs.record_fail(x, i, "helper: " + err, attempt=at))
+    print(f"flow: job {j['id'][:8]} scene {i + 1} failed on helper (attempt {at or '?'}: {err[:160]}) -> "
+          + (f"re-queued attempt {k}/{fs.MAX_ATT} · {(j.get('models') or [''] * 99)[i]}" if act == "retry" else act), flush=True)
+    return {"ok": True, "action": act, "attempt": k, "closed": bool(j.get("closed"))}
+
+
 @app.post("/api/flow/upload")
 async def flow_upload(req: Request, file: UploadFile = File(...)):
     """Token-auth upload from the flow-bridge helper. Fields: job, optional scene (1-based); header Authorization: Bearer <token>."""
@@ -2419,10 +2519,18 @@ async def flow_upload(req: Request, file: UploadFile = File(...)):
         up = await run_in_threadpool(scn.save_upload, j["user"], file.filename, file.file)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, 400)
-    j = _fload(j["id"]); up["model"] = (j.get("models") or [""] * len(j["filled"]))[sc - 1]
     up["video"] = ext in (".mp4", ".mov", ".webm")
-    threading.Thread(target=_flow_score, args=(j["id"], sc - 1, j["user"], up["id"]), daemon=True).start()
-    j["filled"][sc - 1] = up; _fsave(j); _online(j["user"])
+
+    def put(x):
+        up["model"] = (x.get("models") or [""] * len(x["filled"]))[sc - 1]
+        up["attempt"] = int((x.get("att") or {}).get(str(sc - 1), 1))
+        x["filled"][sc - 1] = up; x["prog_t"] = time.time()
+        (x.get("gave") or {}).pop(str(sc - 1), None)  # a late success still counts
+    j, _ = _fupdate(j["id"], put)
+    _online(j["user"])
+    print(f"flow: job {j['id'][:8]} scene {sc} received ({'video' if up['video'] else 'image'} · {up['model']} · attempt {up['attempt']}"
+          f" · {int(time.time() - j['created'])} s after dispatch)", flush=True)
+    threading.Thread(target=_flow_score, args=(j["id"], sc - 1, j["user"], up["id"]), daemon=True).start()  # after the save
     n = sum(1 for x in j["filled"] if x)
     return {"ok": True, "scene": sc, "done": n, "total": len(j["filled"])}
 
