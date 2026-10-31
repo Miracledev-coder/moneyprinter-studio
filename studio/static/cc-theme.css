@@ -74,3 +74,10 @@ a{color:inherit}
 .pv-minimal{background:#0b0b10!important}
 .pv-neon{color:#f5e9ff!important;text-shadow:0 0 6px #a855f7,0 0 14px #a855f7}
 .pv-chunk{font-size:24px!important;font-family:Impact,sans-serif}
+/* colour pickers as swatches */
+.cc-field input[type=color]{-webkit-appearance:none;appearance:none;height:40px;padding:4px;cursor:pointer;background:var(--bg)}
+.cc-field input[type=color]::-webkit-color-swatch-wrapper{padding:0}
+.cc-field input[type=color]::-webkit-color-swatch{border:1px solid var(--line);border-radius:7px}
+.cc-field input[type=color]::-moz-color-swatch{border:1px solid var(--line);border-radius:7px}
+.cc-field input[type=color]:hover,.cc-field input[type=color]:focus{border-color:var(--acc);outline:none}
+.pv i{font-style:normal}
