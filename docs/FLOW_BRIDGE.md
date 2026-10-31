@@ -69,3 +69,19 @@ Character references are sent as `--ref` (image i2i, video r2v). Video durations
     flow-bridge --job ~/Downloads/flow-xxxx.json             # one-off job file
 
 The key is stored at `~/.flow-bridge/key` (mode 600) and is never printed. A 403 from Studio deletes it and asks you to pair again.
+
+## Credits (Google's official table, read 2026-10-31)
+Source: https://support.google.com/flow/answer/16526234. Cost is per generation.
+| Model | Credits |
+|---|---|
+| Veo 3.1 Lite | 10 (Ultra: 5) |
+| Veo 3.1 Fast | 20 (Ultra: 10) |
+| Veo 3.1 Quality | 100 (8 s only) |
+| Veo 3.1 Lite lower priority | 0, Ultra 20x / family managers only |
+| Omni Flash 720p | 4 s: 7 · 6 s: 10 · 8 s: 12 · 10 s: 15 (360p is about half) |
+| Nano Banana Pro / 2 / 2 Lite images | Not on Google's table; gflow-cli docs say 0 credits, daily image quota |
+Every account gets 50 free credits a day; AI Plus adds 200/month, Pro 1,000, Ultra 10,000 or 25,000.
+The helper reads your balance with `gflow credits user --json` every 30 min (spends nothing), and the Shorts and Long-form pages show it next to the estimate.
+
+## Flow Agent (optional, beta)
+The "Use Flow Agent instructions" checkbox passes the preset look and story bible to each image as a Flow Agent instruction card (`gflow image t2i/i2i -i "…"`). Agent instructions cost no credits; images still count toward the 50/day helper cap and 75–120 s pacing. If an account rejects it, the helper retries that image without it.

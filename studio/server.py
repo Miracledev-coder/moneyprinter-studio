@@ -1600,6 +1600,14 @@ def flow_runner(user, jid, req):
             j["adv"] = flow_adv(dict(req.get("flow_adv") if isinstance(req.get("flow_adv"), dict) else {}, **pick))
             j["models"] = [_model(k, adv=j["adv"]) for k in kinds]
         j["sadv"] = {i: flow_adv(v, flow_adv(j.get("adv") or {})) for i, v in sadv.items()}
+        if req.get("flow_agent"):  # opt-in: pass the look + characters as a Flow Agent instruction card (free, no extra generations)
+            try:
+                import stylepresets as sp
+                pr = sp.get(req.get("style_preset"))
+            except Exception:
+                pr = None
+            j["agent_brief"] = clean_text(" ".join(x for x in ((pr or {}).get("visual_style", ""), (meta or {}).get("bible", "")) if x)
+                                          + " Keep every recurring character's face, clothing and colours identical across scenes.", 600)
         _fsave(j)
         if jid in jobs:
             jobs[jid]["flow"] = j["id"]
@@ -1777,7 +1785,7 @@ async def flow_ping(req: Request):
             j = _fload(f.stem)
             if j and j["user"] == u and not j.get("closed") and time.time() - j["created"] < 7 * 86400 and not all(j["filled"]):
                 out.append({"job": j["id"], "upload_url": str(req.base_url).rstrip("/") + "/api/flow/upload", "aspect": j["aspect"],
-                            "duration": j["duration"], "auto": bool(j.get("auto")), "story_bible": j["meta"].get("bible", ""),
+                            "duration": j["duration"], "auto": bool(j.get("auto")), "story_bible": j["meta"].get("bible", ""), "agent_brief": j.get("agent_brief", ""),
                             "references": [{"name": r, "url": "/char/" + r} for r in sorted({r for rs in (j["meta"].get("char_refs") or []) for r in rs})],
                             "scenes": [{"n": i + 1, "type": _kind(j, i), "model": j.get("models", [""] * 99)[i], "sentence": t,
                                         "prompt": _fprompt(j, i), "advanced": _sadv(j, i), "filled": bool(j["filled"][i]),

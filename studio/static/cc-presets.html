@@ -3,6 +3,7 @@
   <select id=style_preset style="flex:1;min-width:200px"><option value="">None (use the AI style above)</option></select></label>
  <div id=sp_models style="display:none;gap:8px;margin-top:8px;flex-wrap:wrap;font-size:13px"><label>Flow image <select id=sp_img><option value=pro>Nano Banana Pro</option><option value=nb2>Nano Banana 2</option><option value=lite>Nano Banana 2 Lite</option></select></label>
   <label>Flow video <select id=sp_vid><option value=lite>Veo 3.1 Lite</option><option value=fast>Veo 3.1 Fast</option><option value=quality>Veo 3.1 Quality</option><option value=omni>Omni Flash</option></select></label></div>
+ <label id=sp_agent_l style="display:flex;gap:6px;align-items:center;font-size:12px;margin-top:6px;color:#c9c4ea"><input type=checkbox id=sp_agent style="width:auto"> Use Flow Agent instructions for images (keeps style + characters consistent; free, beta)</label>
  <div id=sp_hint style="font-size:12px;color:#9c97c0;margin-top:6px;line-height:1.45"></div>
 </div>
 <script>
@@ -14,6 +15,8 @@
   const saved=localStorage.getItem(isLong?'mps_preset_long':'mps_preset');s.value=saved!=null&&(saved==''||P.some(p=>p.id==saved))?saved:(isLong?d.default_long:'');show()});
  s.onchange=show;const prev=window.ccExtra;window.ccExtra=b=>Object.assign(prev?prev(b)||{}:{},{style_preset:s.value});
  window.ccPresetVal=()=>s.value;
+ const ag=document.getElementById('sp_agent');ag.checked=localStorage.getItem('mps_flow_agent')=='1';ag.onchange=()=>localStorage.setItem('mps_flow_agent',ag.checked?'1':'0');
+ {const pa=window.ccExtra;window.ccExtra=b=>Object.assign(pa(b)||{},{flow_agent:ag.checked})}
  const fi=document.getElementById('fimg')||document.getElementById('sp_img'),fv=document.getElementById('fvid')||document.getElementById('sp_vid');
  if(fi.id=='sp_img'){document.getElementById('sp_models').style.display='flex';const pv=window.ccExtra;window.ccExtra=b=>Object.assign(pv(b)||{},{flow_image_model:fi.value,flow_video_model:fv.value})}
  fetch('/api/flow/engine').then(r=>r.json()).then(d=>{if(d.image_model)fi.value=d.image_model;if(d.video_model)fv.value=d.video_model});

@@ -131,6 +131,9 @@ def drive(job, folder, cap, pace=(75, 120)):
             cmd = [gflow, "video", "r2v" if my else "t2v", sc["prompt"], "--aspect", job["aspect"], "--duration", dur, "-o", str(out)]
             for r in my[:3]:
                 cmd += ["--ref", r]
+        agent = kind == "image" and job.get("agent_brief")
+        if agent:  # optional: Flow Agent instruction card for this generation (free; keeps style + characters consistent)
+            cmd += ["-i", job["agent_brief"][:600]]
         if alias:
             cmd += ["--model", alias]
         print(f"[auto] scene {sc['n']}: {kind} · {model or 'Flow default'}{' · ' + str(len(my)) + ' character ref(s)' if my else ''} …", flush=True)
@@ -138,6 +141,10 @@ def drive(job, folder, cap, pace=(75, 120)):
         if r.returncode == DRIFT:
             print("[auto] Flow's page changed and gflow-cli can't find its buttons (exit 23). Stopping automation;"
                   " finish the remaining scenes by hand (prompts.txt) or update:  uv tool upgrade gflow-cli"); return False
+        if r.returncode and r.returncode != DRIFT and agent and not out.exists():
+            print("[auto] Flow Agent instruction was not accepted on this account; retrying without it")
+            i = cmd.index("-i"); cmd = cmd[:i] + cmd[i + 2:]
+            r = subprocess.run(cmd, cwd=folder)
         if r.returncode and alias:
             print(f"[auto] '{alias}' was not accepted; retrying with Flow's default model")
             r = subprocess.run(cmd[:-2], cwd=folder)
