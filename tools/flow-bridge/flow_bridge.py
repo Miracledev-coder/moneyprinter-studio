@@ -85,8 +85,15 @@ def describe(a, kind):
     return ", ".join(out)
 
 
+for _s in (sys.stdout, sys.stderr):  # Windows consoles (cp1252) must not crash on ✓ · … in messages
+    try:
+        _s.reconfigure(errors="replace")
+    except Exception:
+        pass
+
+
 def gflow_bin():
-    for c in (shutil.which("gflow"), str(Path.home() / ".local/bin/gflow")):
+    for c in (shutil.which("gflow"), str(Path.home() / ".local/bin/gflow"), str(Path.home() / ".local/bin/gflow.exe")):
         if c and Path(c).exists():
             return c
     return None
@@ -176,7 +183,11 @@ def pair(base, code, label):
     except urllib.error.HTTPError as e:
         sys.exit(json.loads(e.read() or b"{}").get("error") or f"Pairing failed ({e.code}).")
     KEYF.parent.mkdir(mode=0o700, exist_ok=True)
-    KEYF.write_text(d["key"]); KEYF.chmod(0o600)  # stays on this computer only; never printed
+    KEYF.write_text(d["key"])
+    try:
+        KEYF.chmod(0o600)
+    except OSError:
+        pass  # Windows: the file sits in the user's own profile folder  # stays on this computer only; never printed
     print(f"Paired with Studio account '{d['user']}'. Keep Google Flow signed in to YOUR account in Chrome.")
     return d["key"]
 
@@ -190,8 +201,30 @@ def read_credits():
     if not g:
         return
     try:
-        out = subprocess.run([g, "credits", "user", "--json"], capture_output=True, text=True, timeout=180).stdout
-        d = json.loads(out[out.find("{"):] or "{}")
+        d, err = None, ""
+        for extra in ([], ["--refresh"]):  # --refresh renews a signed-out session headlessly, then reads again
+            r = subprocess.run([g, "credits", "user", "--json", *extra], capture_output=True, text=True, timeout=240)
+            out, err = r.stdout or "", (r.stderr or "").strip()
+            i = out.find("{")
+            if i >= 0:
+                try:
+                    d = json.loads(out[i:out.rfind("}") + 1])
+                except ValueError:
+                    d = None
+            if d is None:  # plain-text fallback: "Credits: 1234"
+                m = re.search(r"credits?\D{0,20}?(\d[\d,]*)", out + "\n" + err, re.I)
+                if m:
+                    d = {"credits": int(m.group(1).replace(",", ""))}
+            if isinstance(d, dict) and (d.get("error") or d.get("ok") is False or d.get("authenticated") is False):
+                err = str(d.get("error") or d.get("message") or d)[:300]; d = None
+            if d is not None:
+                break
+        if d is None:
+            tail = (err or out).strip().splitlines()[-1:] or ["no output"]
+            hint = (" -> Flow looks signed out in the helper's Chrome. Run: flow-bridge --signin"
+                    if re.search(r"auth|sign|login|session|expired|401|403", err + out, re.I) else "")
+            print(f"(could not read Flow credits: {tail[0][:200]}){hint}")
+            return
         def find(x):
             if isinstance(x, dict):
                 for k, v in x.items():

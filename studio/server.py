@@ -1417,9 +1417,9 @@ def _helper_token(u):
     return tok
 
 
-def _helper_script(req, tok):
+def _helper_script(req, tok, win=False):
     base = str(req.base_url).rstrip("/").replace("http://moneyprinter", "https://moneyprinter")
-    tpl = (Path(__file__).resolve().parent.parent / "tools" / "flow-bridge" / "connect_template.command").read_text()
+    tpl = (Path(__file__).resolve().parent.parent / "tools" / "flow-bridge" / ("connect_template.ps1" if win else "connect_template.command")).read_text()
     return base, tpl.replace("__STUDIO__", base).replace("__TOKEN__", tok)
 
 
@@ -1472,6 +1472,37 @@ def flow_helper_zip(req: Request):
                     headers={"Content-Disposition": 'attachment; filename="Connect Flow.zip"', "Cache-Control": "no-store"})
 
 
+@app.get("/api/flow/helper-win.zip")
+def flow_helper_win_zip(req: Request):
+    """'Download Flow Helper for Windows': a zip with one 'Connect Flow.cmd'. It fetches the personalised
+    PowerShell script (single-use 30-min token for this user) and runs it with -ExecutionPolicy Bypass.
+    One self-contained file, so it also works when Explorer runs it straight from inside the zip."""
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    tok = _helper_token(u)
+    base, _ = _helper_script(req, tok, True)
+    cmd = ("@echo off\r\ntitle Connect Google Flow\r\necho MoneyPrinter Studio - connecting your Google Flow...\r\n"
+           f'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm \'{base}/api/flow/helper.ps1?t={tok}\' | iex"\r\n'
+           "pause\r\n")
+    import io, zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("Connect Flow.cmd", cmd)
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="Connect Flow (Windows).zip"', "Cache-Control": "no-store"})
+
+
+@app.get("/api/flow/helper.ps1")
+def flow_helper_ps1(req: Request, t: str = ""):
+    tok = re.sub(r"[^A-Z0-9]", "", t.upper())
+    hit = _PAIRS.get(hashlib.sha256(tok.encode()).hexdigest())
+    if not hit or hit[1] < time.time():
+        return Response("Write-Host 'This link is expired or already used. Get a new one on Studio > Account.' -ForegroundColor Red\n",
+                        media_type="text/plain", status_code=200)
+    return Response(_helper_script(req, tok, True)[1], media_type="text/plain", headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/flow/helper-cmd")
 def flow_helper_cmd(req: Request):
     """Fallback: a one-line Terminal command that fetches the same personalised script (new single-use token)."""
@@ -1480,6 +1511,8 @@ def flow_helper_cmd(req: Request):
         return JSONResponse({"error": "not logged in"}, 401)
     tok = _helper_token(u)
     base, _ = _helper_script(req, tok)
+    if req.query_params.get("os") == "win":
+        return {"cmd": f"irm '{base}/api/flow/helper.ps1?t={tok}' | iex", "expires_in": 1800}
     return {"cmd": f'bash -c "$(curl -sSL {base}/api/flow/helper.sh?t={tok})"', "expires_in": 1800}
 
 
