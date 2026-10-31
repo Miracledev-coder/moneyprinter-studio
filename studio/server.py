@@ -1407,30 +1407,91 @@ FLOW_COSTS = {
 }
 
 
-@app.get("/api/flow/helper.zip")
-def flow_helper_zip(req: Request):
-    """'Download Flow Helper for Mac': a zip holding 'Connect Flow.command' with this server's URL and a
-    single-use pairing token (30 min, bound to this user) baked in. Same claim route as the typed code."""
-    u = current_user(req)
-    if not u:
-        return JSONResponse({"error": "not logged in"}, 401)
+def _helper_token(u):
     now = time.time()
     for h in [h for h, (_, e) in _PAIRS.items() if e < now]:
         _PAIRS.pop(h, None)
     tok = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(24))
     _PAIRS[hashlib.sha256(tok.encode()).hexdigest()] = (u, now + 1800)
     _PSTAGE[u] = ("downloaded", now)
+    return tok
+
+
+def _helper_script(req, tok):
     base = str(req.base_url).rstrip("/").replace("http://moneyprinter", "https://moneyprinter")
     tpl = (Path(__file__).resolve().parent.parent / "tools" / "flow-bridge" / "connect_template.command").read_text()
-    body = tpl.replace("__STUDIO__", base).replace("__TOKEN__", tok)
+    return base, tpl.replace("__STUDIO__", base).replace("__TOKEN__", tok)
+
+
+_APP_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>launcher</string>
+<key>CFBundleIdentifier</key><string>com.moneyprinter.connectflow</string>
+<key>CFBundleName</key><string>Connect Flow</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>LSMinimumSystemVersion</key><string>10.13</string>
+</dict></plist>
+"""
+_APP_LAUNCHER = """#!/bin/bash
+# Opens Terminal with the personalised connect script so you can see what it does.
+R="$(cd "$(dirname "$0")/../Resources" && pwd)"
+chmod +x "$R/connect.command" 2>/dev/null
+xattr -d com.apple.quarantine "$R/connect.command" 2>/dev/null
+open -a Terminal "$R/connect.command"
+"""
+
+
+@app.get("/api/flow/helper.zip")
+def flow_helper_zip(req: Request):
+    """'Download Flow Helper for Mac': a zip with 'Connect Flow.app' (Finder runs it on double-click; it opens
+    Terminal) and 'Connect Flow.command' (same script). URL + a single-use 30-min token for this user baked in."""
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    tok = _helper_token(u)
+    _, body = _helper_script(req, tok)
     import io, zipfile
     buf = io.BytesIO()
+    ts = time.localtime()[:6]
+
+    def put(z, name, data, mode):
+        zi = zipfile.ZipInfo(name, ts)
+        zi.create_system = 3  # unix: Archive Utility / ditto keep the mode bits
+        zi.external_attr = (mode << 16) | (0x10 if name.endswith("/") else 0)
+        z.writestr(zi, data)
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        zi = zipfile.ZipInfo("Connect Flow.command", time.localtime(now)[:6])
-        zi.external_attr = (0o100755 << 16); zi.create_system = 3  # keeps the executable bit when Finder unzips it
-        z.writestr(zi, body)
+        for d in ("Connect Flow.app/", "Connect Flow.app/Contents/", "Connect Flow.app/Contents/MacOS/", "Connect Flow.app/Contents/Resources/"):
+            put(z, d, "", 0o40755)
+        put(z, "Connect Flow.app/Contents/Info.plist", _APP_PLIST, 0o100644)
+        put(z, "Connect Flow.app/Contents/MacOS/launcher", _APP_LAUNCHER, 0o100755)
+        put(z, "Connect Flow.app/Contents/Resources/connect.command", body, 0o100755)
+        put(z, "Connect Flow.command", body, 0o100755)
     return Response(buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": 'attachment; filename="Connect Flow.zip"', "Cache-Control": "no-store"})
+
+
+@app.post("/api/flow/helper-cmd")
+def flow_helper_cmd(req: Request):
+    """Fallback: a one-line Terminal command that fetches the same personalised script (new single-use token)."""
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    tok = _helper_token(u)
+    base, _ = _helper_script(req, tok)
+    return {"cmd": f'bash -c "$(curl -sSL {base}/api/flow/helper.sh?t={tok})"', "expires_in": 1800}
+
+
+@app.get("/api/flow/helper.sh")
+def flow_helper_sh(req: Request, t: str = ""):
+    """Serves the personalised script for a still-valid, unused token (the token itself is used up on pairing)."""
+    tok = re.sub(r"[^A-Z0-9]", "", t.upper())
+    hit = _PAIRS.get(hashlib.sha256(tok.encode()).hexdigest())
+    if not hit or hit[1] < time.time():
+        return Response('echo "This link is expired or already used. Get a new one on Studio > Account."; exit 1\n',
+                        media_type="text/plain", status_code=403)
+    return Response(_helper_script(req, tok)[1], media_type="text/plain", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/flow/{fid}")
