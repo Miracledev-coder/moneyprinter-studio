@@ -14,9 +14,19 @@
 <span class=cc-chip id=music data-on=1 title="Background music"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>Music</span>
 <button class=cc-btn id=go>✦ Generate</button></div>
 <details class=cc-adv><summary>Advanced settings</summary><div class=cc-grid2>
-<div class=cc-field><label>Subtitle style</label><select id=sub_style><option value=classic>Classic white</option><option value=bold>Bold yellow</option><option value=boxed>Boxed</option></select></div>
-<div class=cc-field><label>Subtitle position</label><select id=sub_pos><option value=bottom>Bottom</option><option value=center>Center</option><option value=top>Top</option></select></div>
-<div class=cc-field><label>Subtitle size</label><input id=font_size type=number min=24 max=80 value=48></div>
+<div class=cc-field style="grid-column:1/-1"><label>Subtitle preset</label><div class=cc-pres id=presets><button type=button class="cc-pre" data-p="classic"><span class="pv pv-classic">Aa</span><small>Classic</small></button><button type=button class="cc-pre" data-p="boldpop"><span class="pv pv-boldpop">POP</span><small>Bold Pop</small></button><button type=button class="cc-pre" data-p="highlight"><span class="pv pv-highlight">Make <i>it</i> pop</span><small>Word Highlight</small></button><button type=button class="cc-pre" data-p="karaoke"><span class="pv pv-karaoke">Sing <i>along</i></span><small>Karaoke</small></button><button type=button class="cc-pre" data-p="minimal"><span class="pv pv-minimal">Clean text</span><small>Minimal</small></button><button type=button class="cc-pre" data-p="neon"><span class="pv pv-neon">Glow</span><small>Neon</small></button><button type=button class="cc-pre" data-p="chunk"><span class="pv pv-chunk">FAST</span><small>1–2 words</small></button></div></div>
+<div class=cc-field><label>Subtitle style</label><select id=sub_style><option value=classic>Classic white</option><option value=bold>Bold yellow</option><option value=boxed>Boxed</option><option value=custom>Custom (use options below)</option></select></div>
+<div class=cc-field><label>Subtitle position</label><select id=sub_pos><option value=bottom>Bottom</option><option value=center>Center</option><option value=top>Top</option><option value=custom>Custom %</option></select></div><div class=cc-field><label>Custom position (% from top)</label><input id=sub_custom type=number min=0 max=100 value=70></div>
+<div class=cc-field><label>Subtitle font</label><select id=sub_font><option value="BeVietnamPro-Bold.ttf">Be Vietnam Pro Bold</option><option value="BeVietnamPro-Medium.ttf">Be Vietnam Pro Medium</option><option value="Anton-Regular.ttf">Anton (bold, condensed)</option><option value="Poppins-Bold.ttf">Poppins Bold</option><option value="UTM Kabel KT.ttf">Kabel</option><option value="Charm-Bold.ttf">Charm Bold</option><option value="Charm-Regular.ttf">Charm</option><option value="STHeitiMedium.ttc">Heiti Medium</option><option value="MicrosoftYaHeiBold.ttc">YaHei Bold</option></select></div>
+<div class=cc-field><label>Text colour</label><input id=sub_color type=color value="#FFFFFF"></div>
+<div class=cc-field><label>Outline colour</label><input id=sub_stroke type=color value="#000000"></div>
+<div class=cc-field><label>Outline width</label><input id=sub_stroke_w type=number min=0 max=8 step=0.5 value=1.5></div>
+<div class=cc-field><label>Background box</label><select id=sub_bg_on><option value=0>Off</option><option value=1>On</option></select></div>
+<div class=cc-field><label>Box colour</label><input id=sub_bg type=color value="#000000"></div>
+<div class=cc-field><label>Highlight colour</label><input id=sub_hl type=color value="#A855F7"></div>
+<div class=cc-field><label>UPPERCASE</label><select id=sub_upper><option value=0>Off</option><option value=1>On</option></select></div>
+<div class=cc-field><label>Display</label><select id=sub_mode><option value=sentence>Full line</option><option value=word_by_word>Word by word</option></select></div>
+<div class=cc-field><label>Subtitle size</label><input id=font_size type=number min=24 max=120 value=48></div>
 <div class=cc-field><label>Clip duration (s)</label><input id=clip type=number min=2 max=8 value=4></div>
 <div class=cc-field><label>Speaking speed</label><select id=rate><option value=0.9>Slower</option><option value=1.0 selected>Normal</option><option value=1.1>Faster</option></select></div>
 </div></details></div>
@@ -25,7 +35,7 @@
 <div class=cc-gallery id=grid></div>
 </main></div></div>
 <script>
-const $=id=>document.getElementById(id);let mode='topic';const voiceName={};[...$('voice').options].forEach(o=>voiceName[o.value]=o.text.split(' —')[0]);
+const $=id=>document.getElementById(id);document.addEventListener('DOMContentLoaded',()=>{const v=$('voice');if(!v)return;const n=document.createElement('p');n.id='elnote';n.className='cc-sub';n.style.cssText='font-size:12px;opacity:.75;margin:6px 0 0;display:none';n.textContent='ElevenLabs free plan: about 10k credits/month (~10 min of audio). Commercial use requires attribution to ElevenLabs.';v.closest('label').insertAdjacentElement('afterend',n);const u=()=>n.style.display=v.value.startsWith('elevenlabs:')?'block':'none';v.addEventListener('change',u);u()});let mode='topic';const voiceName={};[...$('voice').options].forEach(o=>voiceName[o.value]=o.text.split(' —')[0]);
 $('mode').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('mode').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');mode=b.dataset.v;$('prompt').placeholder=mode=='topic'?'e.g. 3 habits of calm, productive people':'Paste the narration you want spoken…';$('prompt').style.minHeight=mode=='topic'?'96px':'170px'});
 ['subs','music'].forEach(id=>$(id).onclick=()=>{const on=$(id).dataset.on=='1'?'0':'1';$(id).dataset.on=on;$(id).classList.toggle('off',on=='0')});
 const stages=[[0,'Writing the script'],[10,'Recording the voice-over'],[30,'Finding stock footage'],[50,'Editing the video'],[90,'Finishing up']];
@@ -41,8 +51,17 @@ let last='';async function refresh(){const r=await fetch('/api/history');if(r.st
  const key=JSON.stringify(d);if(key!=last){last=key;$('grid').innerHTML=html}
  const busy=d.some(j=>j.status=='queued'||j.status=='running');setTimeout(refresh,busy?3000:20000)}
 $('go').onclick=async()=>{const t=$('prompt').value.trim();$('msg').textContent='';if(!t){$('msg').textContent='Describe a topic or paste a script first.';return}
- const b={topic:mode=='topic'?t:'',script:mode=='script'?t:'',aspect:$('aspect').value,length:$('length').value,voice:$('voice').value,subtitles:$('subs').dataset.on=='1',music:$('music').dataset.on=='1',sub_style:$('sub_style').value,sub_pos:$('sub_pos').value,clip:+$('clip').value,rate:+$('rate').value,font_size:+$('font_size').value};
+ const b={topic:mode=='topic'?t:'',script:mode=='script'?t:'',aspect:$('aspect').value,length:$('length').value,voice:$('voice').value,subtitles:$('subs').dataset.on=='1',music:$('music').dataset.on=='1',sub_style:$('sub_style').value,sub_pos:$('sub_pos').value,clip:+$('clip').value,rate:+$('rate').value,font_size:+$('font_size').value,sub_custom:+$('sub_custom').value,sub_font:$('sub_font').value,sub_color:$('sub_color').value,sub_stroke:$('sub_stroke').value,sub_stroke_w:+$('sub_stroke_w').value,sub_bg_on:$('sub_bg_on').value=='1',sub_bg:$('sub_bg').value,sub_mode:$('sub_mode').value,preset:window.ccPreset||'',sub_hl:$('sub_hl').value,sub_upper:$('sub_upper').value=='1'};
  $('go').disabled=true;const r=await fetch('/api/generate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const d=await r.json();$('go').disabled=false;
  if(!r.ok){$('msg').textContent=d.error||'Something went wrong.';return}$('prompt').value='';last='';refresh();$('gallery').scrollIntoView({behavior:'smooth'})};
 refresh();
+
+const PRESETS={classic:{sub_style:'custom',sub_pos:'bottom',font_size:56,sub_font:'BeVietnamPro-Bold.ttf',sub_color:'#FFFFFF',sub_stroke:'#000000',sub_stroke_w:2,sub_bg_on:'0',sub_mode:'sentence',sub_upper:'0',p:''},
+boldpop:{sub_style:'custom',sub_pos:'center',font_size:84,sub_font:'Anton-Regular.ttf',sub_color:'#FFFFFF',sub_stroke:'#000000',sub_stroke_w:5,sub_bg_on:'0',sub_upper:'1',p:'boldpop'},
+highlight:{sub_style:'custom',sub_pos:'center',font_size:72,sub_font:'Poppins-Bold.ttf',sub_color:'#FFFFFF',sub_stroke:'#000000',sub_stroke_w:4,sub_bg_on:'0',sub_hl:'#A855F7',sub_upper:'1',p:'highlight'},
+karaoke:{sub_style:'custom',sub_pos:'bottom',font_size:64,sub_font:'Poppins-Bold.ttf',sub_color:'#FFFFFF',sub_stroke:'#000000',sub_stroke_w:3,sub_bg_on:'0',sub_hl:'#FFE14D',sub_upper:'0',p:'karaoke'},
+minimal:{sub_style:'custom',sub_pos:'bottom',font_size:44,sub_font:'BeVietnamPro-Medium.ttf',sub_color:'#FFFFFF',sub_stroke:'#000000',sub_stroke_w:0,sub_bg_on:'1',sub_bg:'#000000',sub_mode:'sentence',sub_upper:'0',p:''},
+neon:{sub_style:'custom',sub_pos:'center',font_size:72,sub_font:'Poppins-Bold.ttf',sub_color:'#FFFFFF',sub_stroke:'#A855F7',sub_stroke_w:2,sub_bg_on:'0',sub_hl:'#A855F7',sub_upper:'1',p:'neon'},
+chunk:{sub_style:'custom',sub_pos:'center',font_size:96,sub_font:'Anton-Regular.ttf',sub_color:'#FFFFFF',sub_stroke:'#000000',sub_stroke_w:5,sub_bg_on:'0',sub_upper:'1',p:'chunk'}};
+document.querySelectorAll('.cc-pre').forEach(btn=>btn.onclick=()=>{const P=PRESETS[btn.dataset.p];for(const k in P){if(k!='p'&&$(k))$(k).value=P[k]}window.ccPreset=P.p;document.querySelectorAll('.cc-pre').forEach(x=>x.classList.toggle('on',x===btn))});
 </script></body></html>

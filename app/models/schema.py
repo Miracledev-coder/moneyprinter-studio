@@ -167,6 +167,9 @@ class VideoParams(BaseModel):
     font_size: int = Field(default=60, ge=1)
     stroke_color: Optional[str] = "#000000"
     stroke_width: float = Field(default=1.5, ge=0, allow_inf_nan=False)
+    subtitle_preset: Optional[str] = ""
+    highlight_color: Optional[str] = "#A855F7"
+    subtitle_uppercase: bool = False
     n_threads: Optional[int] = 2
     paragraph_number: int = Field(default=1, ge=1, le=10)
     video_script_prompt: str = Field(default="", max_length=2000)

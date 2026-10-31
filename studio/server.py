@@ -1,3 +1,4 @@
+import re
 """MoneyPrinter Studio: a clean, private front end for MoneyPrinterTurbo.
 Keys come from env only. One job at a time; temp files are cleaned after each job."""
 import hashlib, hmac, os, queue, secrets, shutil, sys, threading, time, uuid
@@ -63,6 +64,18 @@ VOICES = {
     "Aria — American, female": "en-US-AriaNeural-Female",
     "Guy — American, male": "en-US-GuyNeural-Male",
 }
+EDGE_VOICES = dict(VOICES)
+ELEVEN_VOICES = {
+    "Sarah (ElevenLabs) — American, female": "elevenlabs:EXAVITQu4vr4xnSDxMaL:Sarah",
+    "Jessica (ElevenLabs) — American, female": "elevenlabs:cgSgspJ2msm6clMCkdW9:Jessica",
+    "Alice (ElevenLabs) — British, female": "elevenlabs:Xb7hH8MSUJpSbSDYk0k2:Alice",
+    "Liam (ElevenLabs) — American, male": "elevenlabs:TX3LPaxmHKxFdv7VOQHJ:Liam",
+    "Brian (ElevenLabs) — American, male": "elevenlabs:nPczCjzI2devNBz1zQrb:Brian",
+    "George (ElevenLabs) — British, male": "elevenlabs:JBFqnCBsd6RMkjVDRZzb:George",
+}
+if os.environ.get("ELEVENLABS_API_KEY"):
+    VOICES.update(ELEVEN_VOICES)
+FONTS = {f.name for f in (Path(__file__).resolve().parent.parent / "resource" / "fonts").glob("*.tt[fc]")}
 STYLES = {
     "classic": dict(text_fore_color="#FFFFFF", stroke_color="#000000", stroke_width=1.5, text_background_color=False),
     "bold": dict(text_fore_color="#FFE14D", stroke_color="#000000", stroke_width=2.5, text_background_color=False),
@@ -166,7 +179,10 @@ def index(req: Request):
         return HTMLResponse(LOCKED, 503)
     if not current_user(req):
         return HTMLResponse(LOGIN.replace("{{ERR}}", ""))
-    opts = "".join(f'<option value="{v}">{k}</option>' for k, v in VOICES.items())
+    opts = '<optgroup label="Free voices (Edge)">' + "".join(f'<option value="{v}">{k}</option>' for k, v in EDGE_VOICES.items()) + "</optgroup>"
+    if os.environ.get("ELEVENLABS_API_KEY"):
+        opts += ('<optgroup label="ElevenLabs (free plan ~10k credits/mo &#8776; 10 min audio; commercial use needs attribution)">'
+                 + "".join(f'<option value="{v}">{k}</option>' for k, v in ELEVEN_VOICES.items()) + "</optgroup>")
     return HTMLResponse(PAGE.replace("{{VOICES}}", opts).replace("{{USER}}", current_user(req)))
 
 
@@ -198,7 +214,22 @@ async def generate(req: Request):
         return JSONResponse({"error": "Enter a topic or a script."}, 400)
     if sum(1 for j in jobs.values() if j["status"] in ("queued", "running")) >= 5:
         return JSONResponse({"error": "Queue is full, try again in a few minutes."}, 429)
-    style = STYLES.get(b.get("sub_style"), STYLES["classic"])
+    hexc = lambda v, d: v if isinstance(v, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", v) else d
+    if b.get("sub_style") == "custom":
+        style = dict(text_fore_color=hexc(b.get("sub_color"), "#FFFFFF"), stroke_color=hexc(b.get("sub_stroke"), "#000000"),
+                     stroke_width=max(0.0, min(float(b.get("sub_stroke_w") or 0), 8.0)),
+                     text_background_color=(hexc(b.get("sub_bg"), "#000000") + "AA") if b.get("sub_bg_on") else False,
+                     rounded_subtitle_background=bool(b.get("sub_bg_on")))
+    else:
+        style = dict(STYLES.get(b.get("sub_style"), STYLES["classic"]))
+    font = b.get("sub_font") if b.get("sub_font") in FONTS else "BeVietnamPro-Bold.ttf"
+    pos = b.get("sub_pos") if b.get("sub_pos") in ("top", "center", "bottom", "custom") else "bottom"
+    mode = "word_by_word" if b.get("sub_mode") == "word_by_word" else "sentence"
+    preset = b.get("preset") if b.get("preset") in ("highlight", "karaoke", "boldpop", "neon", "chunk") else ""
+    if preset:
+        mode = "word_by_word"  # presets regroup word timings into ASS lines
+    extra = dict(subtitle_preset=preset, highlight_color=hexc(b.get("sub_hl"), "#A855F7"),
+                 subtitle_uppercase=bool(b.get("sub_upper")))
     voice = b.get("voice") if b.get("voice") in VOICES.values() else VOICES["Ezinne — Nigerian, female"]
     length = {"short": 1, "medium": 2, "long": 3}.get(b.get("length"), 1)
     words = {1: "35 to 45 words (about 15 seconds spoken)", 2: "90 to 110 words", 3: "170 to 200 words"}[length]
@@ -208,10 +239,11 @@ async def generate(req: Request):
         video_clip_duration=max(2, min(int(b.get("clip") or 4), 8)), video_count=1, video_source="pixabay",
         video_language="en", voice_name=voice, voice_rate=float(b.get("rate") or 1.0),
         bgm_type="random" if b.get("music", True) else "", bgm_volume=0.15,
-        subtitle_enabled=bool(b.get("subtitles", True)), font_name="BeVietnamPro-Bold.ttf",
-        font_size=int(b.get("font_size") or 48), subtitle_position=b.get("sub_pos") or "bottom",
+        subtitle_enabled=bool(b.get("subtitles", True)), font_name=font,
+        font_size=max(16, min(int(b.get("font_size") or 48), 120)), subtitle_position=pos,
+        custom_position=max(0.0, min(float(b.get("sub_custom") or 70), 100.0)), subtitle_display_mode=mode,
         n_threads=1, paragraph_number=length,
-        video_script_prompt=f"Write in English. Keep the whole script to {words}.", **style)
+        video_script_prompt=f"Write in English. Keep the whole script to {words}.", **style, **extra)
     jid = str(uuid.uuid4())
     vlabel = next((k.split(" —")[0] for k, v in VOICES.items() if v == voice), "")
     jobs[jid] = dict(status="queued", user=user, params=params, created=time.time(), title=(topic or script)[:90],

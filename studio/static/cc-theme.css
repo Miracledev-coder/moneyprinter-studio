@@ -59,3 +59,18 @@ a{color:inherit}
  .cc-main{padding:0 14px 90px}.cc-btn{width:100%;justify-content:center;margin-left:0}
  .cc-gallery{grid-template-columns:repeat(2,1fr)}
 }
+/* subtitle presets */
+.cc-pres{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
+.cc-pre{background:#121218;border:1px solid #2a2a35;border-radius:10px;padding:0;cursor:pointer;color:#ddd;overflow:hidden;font:inherit}
+.cc-pre.on,.cc-pre:hover{border-color:#a855f7;box-shadow:0 0 0 1px #a855f7}
+.cc-pre .pv{display:flex;align-items:center;justify-content:center;height:58px;background:linear-gradient(135deg,#1d1b2b,#0b0b10);font-weight:800;color:#fff;font-size:15px}
+.cc-pre small{display:block;padding:6px 4px;font-size:11px;opacity:.85}
+.pv-classic{text-shadow:-1px -1px 0 #000,1px 1px 0 #000;font-weight:600!important}
+.pv-boldpop{font-size:22px!important;letter-spacing:1px;-webkit-text-stroke:1px #000;font-family:Impact,sans-serif}
+.pv-highlight i{font-style:normal;color:#a855f7}
+.pv-karaoke{background:linear-gradient(90deg,#FFE14D 55%,#fff 55%) text!important;-webkit-background-clip:text;color:transparent!important}
+.pv-karaoke i{font-style:normal}
+.pv-minimal span,.pv-minimal{font-weight:500!important;font-size:12px!important}
+.pv-minimal{background:#0b0b10!important}
+.pv-neon{color:#f5e9ff!important;text-shadow:0 0 6px #a855f7,0 0 14px #a855f7}
+.pv-chunk{font-size:24px!important;font-family:Impact,sans-serif}

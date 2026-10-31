@@ -1615,6 +1615,117 @@ def _ass_color(hex_color, alpha="00"):
     return f"&H{alpha}{b}{g}{r}".upper()
 
 
+def _parse_srt_words(path):
+    import re as _re
+    def t(x):
+        h, m, r = x.split(":"); sec, ms = r.replace(".", ",").split(",")
+        return int(h) * 3600 + int(m) * 60 + int(sec) + int(ms) / 1000
+    out = []
+    for block in open(path, encoding="utf-8").read().strip().split("\n\n"):
+        lines = [l for l in block.strip().splitlines() if l.strip()]
+        if len(lines) >= 3 and "-->" in lines[1]:
+            a, b = [x.strip() for x in lines[1].split("-->")]
+            out.append((t(a), t(b), " ".join(lines[2:]).strip()))
+    return out
+
+
+def _ass_ts(x):
+    x = max(0.0, x); h = int(x // 3600); m = int(x % 3600 // 60); s = x % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def build_preset_ass(srt_path, ass_path, params, width, height, font_family):
+    """Write an ASS file for Studio subtitle presets from word-level SRT cues."""
+    preset = params.subtitle_preset or ""
+    cues = _parse_srt_words(srt_path)
+    if not cues:
+        return False
+    up = params.subtitle_uppercase
+    fs = int(params.font_size or 48)
+    pos = params.subtitle_position or "bottom"
+    align = {"top": 8, "center": 5}.get(pos, 2)
+    margin_v = int(height * 0.12)
+    if pos == "custom":
+        align = 5
+        margin_v = 0
+    prim = _ass_color(params.text_fore_color or "#FFFFFF")
+    hl = _ass_color(params.highlight_color or "#A855F7")
+    outl = _ass_color(params.stroke_color or "#000000")
+    ow = max(0.0, float(params.stroke_width or 0)) * 1.5
+    bg = params.text_background_color
+    boxed = (isinstance(bg, str) and bg != "") or bg is True
+    border = 3 if boxed else 1
+    back = _ass_color(bg if isinstance(bg, str) else "#000000AA") if boxed else "&H64000000"
+    if boxed:
+        outl = back
+        ow = max(ow, 10)
+    shadow = 0
+    if preset == "neon":
+        shadow = 0
+    head = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {width}
+PlayResY: {height}
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{font_family},{fs},{prim},{hl},{outl},{back},0,0,0,0,100,100,0,0,{border},{ow:.1f},{shadow},{align},{int(width*0.08)},{int(width*0.08)},{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    posTag = ""
+    if pos == "custom":
+        y = int(height * float(params.custom_position or 70) / 100)
+        posTag = f"\\pos({width // 2},{y})"
+    words = [(a, b, (w.upper() if up else w)) for a, b, w in cues]
+    # group words into chunks
+    size = {"chunk": 2, "highlight": 4, "karaoke": 5, "boldpop": 3}.get(preset, 6)
+    chunks, cur = [], []
+    for w in words:
+        if cur and (len(cur) >= size or w[0] - cur[-1][1] > 0.6 or cur[-1][2][-1:] in ".!?"):
+            chunks.append(cur); cur = []
+        cur.append(w)
+    if cur:
+        chunks.append(cur)
+    ev = []
+    def line(a, b, text, layer=0):
+        ev.append(f"Dialogue: {layer},{_ass_ts(a)},{_ass_ts(b)},Default,,0,0,0,,{{{posTag}}}{text}")
+    for i, ch in enumerate(chunks):
+        a, b = ch[0][0], ch[-1][1]
+        nxt = chunks[i + 1][0][0] if i + 1 < len(chunks) else b + 0.3
+        b = max(b, min(nxt, b + 0.4))
+        if preset == "highlight":
+            for j, (wa, wb, _) in enumerate(ch):
+                we = ch[j + 1][0] if j + 1 < len(ch) else b
+                txt = " ".join((f"{{\\c{hl}\\fscx110\\fscy110}}{w}{{\\c{prim}\\fscx100\\fscy100}}" if k == j else w)
+                               for k, (_, _, w) in enumerate(ch))
+                line(wa if j else a, we, txt)
+        elif preset == "karaoke":
+            parts = []
+            prev = a
+            for wa, wb, w in ch:
+                pad = max(0, int(round((wa - prev) * 100)))
+                if pad:
+                    parts.append(f"{{\\k{pad}}}")
+                parts.append(f"{{\\kf{max(1, int(round((wb - wa) * 100)))}}}{w} ")
+                prev = wb
+            line(a, b, f"{{\\1c{hl}\\2c{prim}}}" + "".join(parts))
+        elif preset == "boldpop":
+            line(a, b, "{\\fscx70\\fscy70\\t(0,120,\\fscx108\\fscy108)\\t(120,200,\\fscx100\\fscy100)}" + " ".join(w for _, _, w in ch))
+        elif preset == "neon":
+            txt = " ".join(w for _, _, w in ch)
+            line(a, b, f"{{\\blur8\\bord{max(4, int(ow) + 4)}\\3c{hl}\\1c{hl}}}" + txt, 0)
+            line(a, b, f"{{\\bord0\\1c{prim}}}" + txt, 1)
+        else:
+            line(a, b, " ".join(w for _, _, w in ch))
+    with open(ass_path, "w", encoding="utf-8") as f:
+        f.write(head + "\n".join(ev) + "\n")
+    return True
+
+
 def _ffmpeg_final_render(video_path, audio_path, subtitle_path, output_file, params,
                          bgm_file_override, width, height) -> bool:
     """Low-memory final render: one ffmpeg process (libass subtitles + audio mix),
@@ -1653,9 +1764,14 @@ def _ffmpeg_final_render(video_path, audio_path, subtitle_path, output_file, par
                       f"OutlineColour={_ass_color(bg if isinstance(bg, str) else '#000000AA')}", "Outline=6", "Shadow=0"]
         else:
             style += ["BorderStyle=1", f"Outline={max(0.0, (params.stroke_width or 0)) * 288 / height * 1.5:.2f}", "Shadow=0"]
-        sub = subtitle_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
         fdir = utils.font_dir().replace(":", "\\:")
-        vf += f",subtitles='{sub}':fontsdir='{fdir}':force_style='{','.join(style)}'"
+        ass_file = os.path.splitext(subtitle_path)[0] + ".preset.ass"
+        if getattr(params, "subtitle_preset", "") and build_preset_ass(subtitle_path, ass_file, params, width, height, font_family):
+            sub = ass_file.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+            vf += f",subtitles='{sub}':fontsdir='{fdir}'"
+        else:
+            sub = subtitle_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+            vf += f",subtitles='{sub}':fontsdir='{fdir}':force_style='{','.join(style)}'"
     vol = params.voice_volume or 1.0
     if bgm:
         af = (f"[1:a]volume={vol}[v];[2:a]volume={params.bgm_volume or 0.2}[m];"

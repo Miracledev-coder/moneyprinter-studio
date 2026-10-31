@@ -470,6 +470,26 @@ def is_minimax_voice(voice_name: str | None) -> bool:
     return (voice_name or "").startswith("minimax:")
 
 
+def _elevenlabs_words(align):
+    """Group ElevenLabs character alignment into (word, start_s, end_s)."""
+    chars = align.get("characters") or []
+    sts = align.get("character_start_times_seconds") or []
+    ens = align.get("character_end_times_seconds") or []
+    out, cur, cs, ce = [], "", None, None
+    for c, a, b in zip(chars, sts, ens):
+        if c.isspace():
+            if cur:
+                out.append((cur, cs, ce))
+            cur, cs = "", None
+            continue
+        if cs is None:
+            cs = a
+        cur += c; ce = b
+    if cur:
+        out.append((cur, cs, ce))
+    return out
+
+
 def is_elevenlabs_voice(voice_name: str) -> bool:
     return (voice_name or "").startswith("elevenlabs:")
 
@@ -2517,9 +2537,9 @@ def elevenlabs_tts(
         return None
 
     if not model_id:
-        model_id = config.elevenlabs.get("model_id", "eleven_multilingual_v2")
+        model_id = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
 
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/with-timestamps"
     headers = {
         "xi-api-key": api_key,
         "Content-Type": "application/json",
@@ -2614,21 +2634,26 @@ def elevenlabs_tts(
                 )
                 continue
 
+            import base64
+            body = bytearray()
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    body.extend(chunk)
+                if len(body) > _ELEVENLABS_TTS_MAX_AUDIO_BYTES * 2:
+                    logger.error("ElevenLabs TTS response exceeds size limit")
+                    return None
+            data = json.loads(bytes(body)); del body
+            audio = base64.b64decode(data.get("audio_base64") or "")
+            align = data.get("normalized_alignment") or data.get("alignment") or {}
+            del data
             descriptor, temp_path = tempfile.mkstemp(
                 prefix=".elevenlabs-tts-",
                 suffix=os.path.splitext(voice_file)[1] or ".mp3",
                 dir=os.path.dirname(os.path.abspath(voice_file)),
             )
-            audio_bytes = 0
             with os.fdopen(descriptor, "wb") as output:
-                for chunk in response.iter_content(chunk_size=64 * 1024):
-                    if not chunk:
-                        continue
-                    audio_bytes += len(chunk)
-                    if audio_bytes > _ELEVENLABS_TTS_MAX_AUDIO_BYTES:
-                        logger.error("ElevenLabs TTS audio exceeds the 50 MB limit")
-                        return None
-                    output.write(chunk)
+                output.write(audio)
+            audio_bytes = len(audio); del audio
             if audio_bytes == 0:
                 logger.error("ElevenLabs TTS returned no audio data")
                 return None
@@ -2648,6 +2673,12 @@ def elevenlabs_tts(
 
             sub_maker = ensure_legacy_submaker_fields(SubMaker())
             logger.success(f"elevenlabs tts succeeded: {voice_file}")
+            words = _elevenlabs_words(align)
+            if words:
+                for w, st, en in words:
+                    sub_maker.subs.append(w)
+                    sub_maker.offset.append((int(st * 1e7), int(en * 1e7)))
+                return sub_maker
             return populate_legacy_submaker_with_full_text(
                 sub_maker=sub_maker,
                 text=text,
