@@ -1607,6 +1607,9 @@ def subtitle_font_supports_text(font_path: str, text: str) -> bool:
     return _subtitle_font_supports_sample(font_path, sample)
 
 
+MOVE_TAG = "{\\move"
+
+
 def _ass_color(hex_color, alpha="00"):
     h = (hex_color or "#FFFFFF").lstrip("#")
     if len(h) == 8:
@@ -1663,12 +1666,17 @@ def build_preset_ass(srt_path, ass_path, params, width, height, font_family):
     boxed = (isinstance(bg, str) and bg != "") or bg is True
     border = 3 if boxed else 1
     back = _ass_color(bg if isinstance(bg, str) else "#000000AA") if boxed else "&H64000000"
+    op = max(0, min(100, int(getattr(params, "sub_bg_opacity", 67))))
     if boxed:
+        a = 255 - int(op * 2.55)  # ASS alpha: 00 opaque .. FF clear
+        back = back[:2] + f"{a:02X}" + back[4:]
         outl = back
-        ow = max(ow, 10)
-    shadow = 0
+        ow = max(1, int(getattr(params, "sub_pad", 10)))  # BorderStyle 3: outline width = box padding
+    shadow = float(getattr(params, "sub_shadow", 0) or 0)
     if preset == "neon":
         shadow = 0
+    mlr = int(width * max(0, min(30, int(getattr(params, "sub_margin", 8)))) / 100)
+    spacing = float(getattr(params, "sub_spacing", 0) or 0)
     head = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {width}
@@ -1678,7 +1686,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_family},{fs},{prim},{hl},{outl},{back},{-1 if getattr(params, 'subtitle_bold', False) else 0},{-1 if getattr(params, 'subtitle_italic', False) else 0},0,0,100,100,0,0,{border},{ow:.1f},{shadow},{align},{int(width*0.08)},{int(width*0.08)},{margin_v},1
+Style: Default,{font_family},{fs},{prim},{hl},{outl},{back},{-1 if getattr(params, 'subtitle_bold', False) else 0},{-1 if getattr(params, 'subtitle_italic', False) else 0},0,0,100,100,{spacing:.1f},0,{border},{ow:.1f},{shadow},{align},{mlr},{mlr},{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1690,6 +1698,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     words = [(a, b, (w.upper() if up else w)) for a, b, w in cues]
     # group words into chunks
     size = {"chunk": 2, "highlight": 4, "karaoke": 5, "boldpop": 3}.get(preset, 6)
+    wpl = int(getattr(params, "words_per_line", 0) or 0)
+    if wpl:
+        size = max(1, min(12, wpl)) * max(1, min(3, int(getattr(params, "max_lines", 1) or 1)))
+    anim = {"pop": "{\\fscx70\\fscy70\\t(0,120,\\fscx106\\fscy106)\\t(120,200,\\fscx100\\fscy100)}",
+            "fade": "{\\fad(150,100)}", "bounce": "{\\move(0,0,0,0)}"}.get(getattr(params, "sub_anim", "") or "", "")
     chunks, cur = [], []
     for w in words:
         if cur and (len(cur) >= size or w[0] - cur[-1][1] > 0.6 or cur[-1][2][-1:] in ".!?"):
@@ -1699,7 +1712,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         chunks.append(cur)
     ev = []
     def line(a, b, text, layer=0):
-        ev.append(f"Dialogue: {layer},{_ass_ts(a)},{_ass_ts(b)},Default,,0,0,0,,{{{posTag}}}{text}")
+        an = anim
+        if (getattr(params, "sub_anim", "") or "") == "bounce":  # small drop-in from 3% above
+            if posTag:
+                y = int(height * float(params.custom_position or 70) / 100)
+                an = f"{{\\move({width // 2},{y - int(height * .03)},{width // 2},{y},0,140)}}"
+            else:
+                an = "{\\fscy80\\t(0,90,\\fscy112)\\t(90,180,\\fscy100)}"
+        if wpl and int(getattr(params, "max_lines", 1) or 1) > 1:  # hard line breaks every wpl words
+            ws = text.split(" ")
+            if not any("{" in w for w in ws):
+                text = "\\N".join(" ".join(ws[k:k + wpl]) for k in range(0, len(ws), wpl))
+        _pt = "" if an.startswith(MOVE_TAG) else "{" + posTag + "}"
+        ev.append(f"Dialogue: {layer},{_ass_ts(a)},{_ass_ts(b)},Default,,0,0,0,,{_pt}{an}{text}")
     for i, ch in enumerate(chunks):
         a, b = ch[0][0], ch[-1][1]
         nxt = chunks[i + 1][0][0] if i + 1 < len(chunks) else b + 0.3
@@ -1809,26 +1834,96 @@ def _ffmpeg_final_render(video_path, audio_path, subtitle_path, output_file, par
             bgm = (bgm_file_override if bgm_file_override is not None else get_bgm_file(bgm_type=params.bgm_type, bgm_file=params.bgm_file)) or ""
         except Exception as exc:
             logger.warning(f"bgm unavailable: {exc}")
-    cmd = [ffmpeg, "-y", "-loglevel", "error", "-i", video_path, "-i", audio_path]
+    hd = bool(getattr(params, "output_hd", False))  # 1080p option: compose at 720p, upscale once at the very end (RAM-safe)
+    # audio length decides the end card start
+    try:
+        _o = subprocess.run([ffmpeg, "-hide_banner", "-i", audio_path], capture_output=True, text=True, timeout=60).stderr
+        _m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", _o)
+        adur = int(_m.group(1)) * 3600 + int(_m.group(2)) * 60 + float(_m.group(3)) if _m else 0.0
+    except Exception:
+        adur = 0.0
+    end_txt = (getattr(params, "end_card_text", "") or "").strip()[:40] if adur > 0 else ""
+    END = 2.5
+    wm = getattr(params, "watermark_file", "") or ""
+    wm = wm if wm and os.path.exists(wm) else ""
+    cmd = [ffmpeg, "-y", "-loglevel", "error", "-filter_complex_threads", "1", "-threads", "1", "-i", video_path, "-i", audio_path]
+    idx = 2
+    bi = wi = None
     if bgm:
-        cmd += ["-stream_loop", "-1", "-i", bgm]
+        cmd += ["-stream_loop", "-1", "-i", bgm]; bi = idx; idx += 1
+    if wm:
+        cmd += ["-threads", "1", "-loop", "1", "-framerate", "30", "-t", f"{(adur or 600) + END:.2f}", "-i", wm]; wi = idx; idx += 1
     vf = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
     if params.subtitle_enabled and subtitle_path and os.path.exists(subtitle_path):
         vf += "," + subtitle_filter(params, subtitle_path, width, height)
+    if end_txt:
+        vf += f",tpad=stop_mode=clone:stop_duration={END}"
+    graph = f"[0:v]{vf}[v0]"
+    last = "v0"
+    if wm:
+        ww = max(80, width // 6)
+        graph += (f";[{wi}:v]scale={ww}:-1,format=rgba,colorchannelmixer=aa=0.55[wm]"
+                  f";[{last}][wm]overlay=W-w-{width // 36}:{height // 40}:eof_action=repeat[v1]")
+        last = "v1"
+    if end_txt:  # end card drawn with Pillow (this ffmpeg build has no drawtext), overlaid for the last 2.5s
+        from PIL import Image, ImageDraw, ImageFont
+        fdir = os.path.join(utils.root_dir(), "resource", "fonts")
+        card = Image.new("RGBA", (width, height), (11, 10, 26, 235))
+        dr = ImageDraw.Draw(card)
+        fs = max(28, width // 14)
+        f1 = ImageFont.truetype(os.path.join(fdir, "Poppins-Regular.ttf"), fs * 2 // 3)
+        f2 = ImageFont.truetype(os.path.join(fdir, "Poppins-Bold.ttf"), fs)
+        for txt, fnt, col, y in (("Follow for more", f1, (201, 184, 245), height // 2 - fs * 3 // 2),
+                                 (end_txt, f2, (244, 239, 230), height // 2 - fs // 3)):
+            tw = dr.textlength(txt, font=fnt)
+            dr.text(((width - tw) / 2, y), txt, font=fnt, fill=col)
+        dr.rounded_rectangle(((width - width // 3) // 2, height // 2 + fs, (width + width // 3) // 2, height // 2 + fs + 6), 3, fill=(168, 85, 247))
+        if wm:
+            try:
+                lg = Image.open(wm).convert("RGBA"); lg.thumbnail((width // 2, height // 6))
+                card.alpha_composite(lg, ((width - lg.width) // 2, height // 2 - fs * 3 // 2 - lg.height - fs // 2))
+            except Exception:
+                pass
+        card_path = output_file + ".endcard.png"
+        card.save(card_path)
+        cmd += ["-threads", "1", "-loop", "1", "-framerate", "30", "-t", f"{adur + END:.2f}", "-i", card_path]; ci = idx; idx += 1
+        graph += f";[{last}][{ci}:v]overlay=0:0:eof_action=repeat:enable='gte(t,{adur:.2f})'[v2]"
+        last = "v2"
     vol = params.voice_volume or 1.0
-    if bgm:
-        af = (f"[1:a]volume={vol}[v];[2:a]volume={params.bgm_volume or 0.2}[m];"
-              f"[v][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]")
+    pad = f",apad=pad_dur={END}" if end_txt else ""
+    fade = f",afade=t=out:st={adur + END - 1.2:.2f}:d=1.2" if end_txt else ""
+    _tot = adur + (END if end_txt else 0)
+    _fi, _fo = float(getattr(params, "music_fade_in", 1.5) or 0), float(getattr(params, "music_fade_out", 2.5) or 0)
+    mf = (f",afade=t=in:st=0:d={_fi:.2f}" if _fi > 0 else "") + (f",afade=t=out:st={max(0, _tot - _fo):.2f}:d={_fo:.2f}" if _fo > 0 else "")
+    if bgm and getattr(params, "duck_music", False):
+        # real auto-ducking: the voice drives a sidechain compressor on the music
+        af = (f"[1:a]volume={vol}{pad},asplit=2[v][sc];[{bi}:a]volume={params.bgm_volume or 0.3}{mf}[m0];"
+              f"[m0][sc]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=450[m];"
+              f"[v][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0{fade}[a]")
+    elif bgm:
+        af = (f"[1:a]volume={vol}{pad}[v];[{bi}:a]volume={params.bgm_volume or 0.2}{mf}[m];"
+              f"[v][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0{fade}[a]")
     else:
-        af = f"[1:a]volume={vol}[a]"
-    cmd += ["-filter_complex", f"[0:v]{vf}[vo];{af}", "-map", "[vo]", "-map", "[a]", "-shortest",
-            "-c:v", "libx264", "-preset", os.environ.get("MPT_X264_PRESET", "veryfast"), "-crf", "23",
+        af = f"[1:a]volume={vol}{pad}[a]"
+    if hd:
+        graph += f";[{last}]scale={(width * 3) // 2}:{(height * 3) // 2}:flags=lanczos[vh]"
+        last = "vh"
+    total = adur + (END if end_txt else 0)
+    cmd += ["-filter_complex", f"{graph};{af}", "-map", f"[{last}]", "-map", "[a]"]
+    cmd += (["-t", f"{total:.2f}"] if total > 0 else ["-shortest"])
+    cmd += ["-c:v", "libx264", "-preset", os.environ.get("MPT_X264_PRESET", "veryfast"), "-crf", "23",
             "-pix_fmt", "yuv420p", "-threads", os.environ.get("MPT_FFMPEG_THREADS", "1"),
             "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", output_file]
     logger.info("rendering final video with a single ffmpeg pass (low-memory mode)")
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    if end_txt:
+        try:
+            os.remove(output_file + ".endcard.png")
+        except OSError:
+            pass
     if r.returncode != 0:
-        raise RuntimeError(f"ffmpeg final render failed: {r.stderr[-500:]}")
+        err = "\n".join(l for l in r.stderr.splitlines() if "ontconfig" not in l and "fonctconfig" not in l)
+        raise RuntimeError(f"ffmpeg final render failed (rc={r.returncode}{', killed: out of memory?' if r.returncode in (-9, 137) else ''}): {err[-500:]}")
     return True
 
 

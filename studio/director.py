@@ -51,17 +51,18 @@ RULES = """Short-form rules (TikTok/Reels/Shorts):
 - Never invent precise statistics; use honest wording ("thousands", "hours a day") unless the fact is common knowledge."""
 
 
-def write_script(topic, secs, given=""):
+def write_script(topic, secs, given="", style=""):
+    st = f"\nFORMAT (follow it, it overrides generic structure): {style[:600]}" if style else ""
     lo, hi = round(secs * 2.3 * 0.9), round(secs * 2.3 * 1.05)
     src = (f"Rewrite this script into a stronger short video, keeping its facts and intent:\n{given}" if given
            else f"Topic: {topic}")
     d = gem(f"""You are a top short-form scriptwriter. {src}
 Length: {lo}-{hi} words total (~{secs}s spoken).
-{RULES}
+{RULES}{st}
 Return JSON {{"script": "the full narration, one sentence per line"}}""", temp=0.9)
     draft = str(d.get("script", "")).strip()
     r = gem(f"""You are a harsh short-form video editor. Critique this {secs}s script against the rules, then rewrite it to fix EVERY problem.
-{RULES}
+{RULES}{st}
 Length must stay {lo}-{hi} words.
 SCRIPT:
 {draft}
@@ -126,8 +127,13 @@ def pixabay(q, portrait):
     try:
         hits = json.loads(cf.read_text()) if cf.exists() else None
         if hits is None:
-            hits = json.loads(_get("https://pixabay.com/api/videos/?" + urllib.parse.urlencode(
-                {"key": key, "q": q[:80], "per_page": 12, "safesearch": "true"}), 15)).get("hits", [])
+            hits = []
+            for page in (1, 2):  # two pages, every video type (film + animation) to widen the pool
+                r = json.loads(_get("https://pixabay.com/api/videos/?" + urllib.parse.urlencode(
+                    {"key": key, "q": q[:80], "per_page": 20, "page": page, "safesearch": "true", "video_type": "all"}), 15))
+                hits += r.get("hits", [])
+                if len(r.get("hits", [])) < 20 or int(r.get("totalHits") or 0) <= 20:
+                    break
             cf.write_text(json.dumps(hits))
     except Exception:
         return []
@@ -166,6 +172,90 @@ def pexels(q, portrait):
     return out
 
 
+BOT_UA = {"User-Agent": "MoneyPrinterStudio/1.0 (https://github.com/Miracledev-coder/moneyprinter-studio)"}
+FREE_LICENCES = re.compile(r"^(cc0|public domain|pd|cc by( \d\.\d)?|cc-by-\d\.\d)$", re.I)
+
+
+def commons(q, portrait):
+    """Wikimedia Commons video search (public API, no key). Only CC0 / public domain / CC BY clips are kept;
+    CC BY credit is stored in 'credit' for the description. ShareAlike and NonCommercial clips are skipped."""
+    if not q:
+        return []
+    cf = CACHE / ("c_" + hashlib.md5(q.encode()).hexdigest() + ".json")
+    try:
+        if cf.exists():
+            pages = json.loads(cf.read_text())
+        else:
+            req = urllib.request.Request("https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode({
+                "action": "query", "format": "json", "generator": "search", "gsrsearch": f"{q} filetype:video",
+                "gsrnamespace": 6, "gsrlimit": 12, "prop": "imageinfo", "iiprop": "url|size|mime|extmetadata",
+                "iiextmetadatafilter": "LicenseShortName|Artist", "iiurlwidth": 320}), headers=BOT_UA)
+            with urllib.request.urlopen(req, timeout=15) as r:
+                pages = list((json.loads(r.read()).get("query") or {}).get("pages", {}).values())
+            cf.write_text(json.dumps(pages))
+    except Exception:
+        return []
+    out = []
+    for p in pages:
+        i = (p.get("imageinfo") or [{}])[0]
+        md = i.get("extmetadata") or {}
+        lic = str((md.get("LicenseShortName") or {}).get("value", "")).strip()
+        if not FREE_LICENCES.match(lic) or not i.get("url") or not i.get("thumburl"):
+            continue
+        w, h, dur = int(i.get("width") or 0), int(i.get("height") or 0), float(i.get("duration") or 0)
+        if min(w, h) < 480 or dur < 3:
+            continue
+        artist = re.sub(r"<[^>]+>", "", str((md.get("Artist") or {}).get("value", "")))[:60]
+        out.append({"id": "wc" + str(p.get("pageid")), "url": i["url"], "thumb": i["thumburl"], "dur": dur, "w": w, "h": h,
+                    "fit": (h > w) == portrait, "q": q, "tags": p.get("title", ""),
+                    "credit": f"{p.get('title', '')} by {artist} ({lic}), Wikimedia Commons"})
+    return out
+
+
+def nasa(q, portrait):
+    """NASA Image and Video Library (public API, no key). NASA media is generally not copyrighted; only used
+    for space/science queries so it never replaces on-location footage."""
+    if not q or not re.search(r"space|rocket|planet|earth|moon|mars|star|galaxy|satellite|astronaut|nasa|orbit|sun|launch|storm|hurricane", q, re.I):
+        return []
+    cf = CACHE / ("n_" + hashlib.md5(q.encode()).hexdigest() + ".json")
+    try:
+        if cf.exists():
+            out = json.loads(cf.read_text())
+        else:
+            items = json.loads(_get("https://images-api.nasa.gov/search?" + urllib.parse.urlencode(
+                {"q": q, "media_type": "video", "page_size": 6}), 15)).get("collection", {}).get("items", [])
+            out = []
+            for it in items[:6]:
+                nid = (it.get("data") or [{}])[0].get("nasa_id", "")
+                try:
+                    files = json.loads(_get(urllib.parse.quote(it["href"], safe=":/~"), 15))
+                except Exception:
+                    continue
+                files = [urllib.parse.quote(f, safe=":/~") for f in files]
+                mp4 = next((f for f in files if f.endswith("~mobile.mp4")), None) or next((f for f in files if f.endswith("~small.mp4")), None) \
+                    or next((f for f in files if f.endswith("~medium.mp4")), None)
+                thumb = next((l.get("href") for l in it.get("links", []) if l.get("href")), "")
+                if mp4 and thumb:
+                    out.append({"id": "na" + nid[:40], "url": mp4.replace("http://", "https://"), "thumb": thumb, "dur": 20.0,
+                                "w": 1280, "h": 720, "fit": not portrait, "q": q, "tags": nid, "credit": "NASA"})
+            cf.write_text(json.dumps(out))
+    except Exception:
+        return []
+    return out
+
+
+def variants(queries):
+    """More ways to say each query: the original, a shorter 2-word core, and a generic fallback without the place name."""
+    out, seen = [], set()
+    places = r"\b(lagos|nigeria|nigerian|african?|abuja|ibadan|accra|kenya|nairobi)\b"
+    for q in queries:
+        for v in (q, " ".join(q.split()[-2:]), re.sub(places, "", q, flags=re.I).strip()):
+            v = re.sub(r"\s+", " ", v).strip()
+            if v and v.lower() not in seen:
+                seen.add(v.lower()); out.append(v)
+    return out[:9]
+
+
 def _thumb(url):
     cf = CACHE / ("t_" + hashlib.md5(url.encode()).hexdigest() + ".jpg")
     if not cf.exists():
@@ -180,13 +270,16 @@ def _thumb(url):
 def candidates(shots, portrait, per_shot=4):
     def one(s):
         seen, pool = set(), []
-        for q in s["queries"]:
-            for c in pixabay(q, portrait) + pexels(q, portrait):
+        for q in variants(s["queries"]):
+            src = pixabay(q, portrait) + pexels(q, portrait)
+            if q in s["queries"][:2]:  # free archives only for the main queries (keeps request count low)
+                src += commons(q, portrait) + nasa(q, portrait)
+            for c in src:
                 if c["id"] not in seen:
                     seen.add(c["id"]); pool.append(c)
         # pre-rank cheaply: matching orientation, HD, long enough, earlier (more literal) query
         qi = {q: i for i, q in enumerate(s["queries"])}
-        pool.sort(key=lambda c: (not c["fit"], min(c["w"], c["h"]) < 720, qi.get(c["q"], 9)))
+        pool.sort(key=lambda c: (not c["fit"], min(c["w"], c["h"]) < 720, qi.get(c["q"], 5)))
         return pool[:per_shot * 2]
     with ThreadPoolExecutor(4) as ex:
         return list(ex.map(one, shots))
@@ -240,7 +333,9 @@ Return JSON {{"scores": [{{"id": "S1C1", "score": 0-10, "watermark": false, "che
             for j, c in enumerate(pools[bi]):
                 if c["id"] not in used and (v := val(bi, j, c)) > bs and scores.get((bi, j), (0,))[0] >= 6:
                     best, bs = dict(c, score=round(v, 1), why="b-roll: " + scores.get((bi, j), (0, ""))[1]), v
+                    raw = scores.get((bi, j), (0,))[0]
         if best:
+            best["raw"] = raw if raw < 50 else 0  # 0 = never scored
             used.add(best["id"])
         picks.append(best)
     return picks, len(imgs)
@@ -286,13 +381,28 @@ GRADE = {"warm": "colorbalance=rs=0.04:gs=0.0:bs=-0.05:rm=0.03:bm=-0.03",
          "neutral": "null"}
 
 
-def cut(src, dst, dur, W, H, look, still=False, zoom=True):
+KB = [  # Ken Burns moves (zoom expr, x expr, y expr); N = total frames, on = frame index
+    ("1.0+0.14*on/N", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),                       # slow push in
+    ("1.14-0.14*on/N", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"),                      # pull out
+    ("1.12", "(iw-iw/zoom)*on/N", "ih/2-(ih/zoom/2)"),                                # pan left to right
+    ("1.12", "(iw-iw/zoom)*(1-on/N)", "ih/2-(ih/zoom/2)"),                            # pan right to left
+    ("1.04+0.10*on/N", "iw/2-(iw/zoom/2)", "(ih-ih/zoom)*(1-on/N)"),                  # rise up while pushing in
+    ("1.12-0.06*on/N", "(iw-iw/zoom)*0.3*(1+on/N)", "(ih-ih/zoom)*0.6*(1-on/N*0.5)"),  # diagonal drift
+]
+
+
+def cut(src, dst, dur, W, H, look, still=False, zoom=True, kb=0, anim=False):
     """Crop-to-fill, light grade (same for every clip), subtle push-in on static/slow shots, exact duration."""
-    grade = f"eq=contrast=1.06:saturation=1.05,{GRADE.get(look, 'null')}"
+    grade = "null" if anim else f"eq=contrast=1.06:saturation=1.05,{GRADE.get(look, 'null')}"
     fit = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}"
     frames = max(1, int(dur * 30))
     if still:
-        vf = f"scale={W*2}:{H*2}:force_original_aspect_ratio=increase,crop={W*2}:{H*2},zoompan=z='1+0.0015*on':d={frames}:s={W}x{H}:fps=30,{grade},format=yuv420p"
+        z, x, y = (e.replace("N", str(frames)) for e in KB[kb % len(KB)])
+        vf = (f"scale={int(W*1.5)}:{int(H*1.5)}:force_original_aspect_ratio=increase,crop={int(W*1.5)}:{int(H*1.5)},"
+              f"zoompan=z='{z}':x='{x}':y='{y}':d={frames}:s={W}x{H}:fps=30,{grade},format=yuv420p")
+        if anim:  # stick-figure doodle feel: gentle hand-held wobble + pop-in from paper white
+            vf += (f",rotate='0.008*sin(2*PI*t*1.3)':fillcolor=0xF5F2EA:ow={W}:oh={H}"
+                   f",fade=t=in:st=0:d=0.18:color=0xF5F2EA,format=yuv420p")
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-i", src, "-t", f"{dur:.2f}", "-vf", vf]
     else:
         _, _, sd = probe(src)
@@ -316,38 +426,153 @@ def probe(path):
     return (int(m[1]), int(m[2]), dur) if m else (0, 0, dur)
 
 
-def direct(jid, topic, script, secs, voice, rate, aspect, workdir, log=print):
+def fade_plan(lines, durs, xf):
+    """Crossfade only where it fits: calm, longer shots. Keep hard cuts after the hook, on short punchy lines,
+    and on lines ending in ! or ? (energy beats)."""
+    out = []
+    for i, l in enumerate(lines):
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        ok = (i >= 1 and nxt and durs[i] >= 2.6 and durs[i + 1] >= 2.6 and not l.rstrip().endswith(("!", "?"))
+              and len(l.split()) >= 7 and not re.match(r"^(but|now|so|and then|suddenly|here)", nxt.lower()))
+        out.append(bool(ok))
+    return out
+
+
+def join(clips, fades, xf, dst):
+    """One file: xfade where fades[i] (clip i was cut xf longer to keep sync), hard concat elsewhere."""
+    ins, graph, acc, t = [], [], "[n0]", probe(clips[0])[2]
+    for k, c in enumerate(clips):  # stills (Ken Burns) and stock clips differ in fps/timebase/SAR: normalise for xfade
+        ins += ["-i", c]
+        graph.append(f"[{k}:v]fps=30,settb=AVTB,setsar=1,format=yuv420p[n{k}]")
+    nf = 0
+    for i in range(1, len(clips)):
+        d = probe(clips[i])[2]
+        lab = f"[j{i}]"
+        if fades[i - 1]:
+            graph.append(f"{acc}[n{i}]xfade=transition=fade:duration={xf}:offset={t - xf:.3f}{lab}")
+            t = t - xf + d; nf += 1
+        else:
+            graph.append(f"{acc}[n{i}]concat=n=2:v=1:a=0{lab}")
+            t += d
+        acc = lab
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-filter_complex_threads", "1", *ins, "-filter_complex", ";".join(graph), "-map", acc,
+                    "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads", "1", "-pix_fmt", "yuv420p", dst],
+                   timeout=600, check=True, capture_output=True)
+    return nf
+
+
+def direct(jid, topic, script, secs, voice, rate, aspect, workdir, log=print, progress=None, crossfade=True, style="",
+           visuals="stock", ai_style="realistic", ai_prompts=None, keep_script=False, flow=None, chars=None, free_ai=True):
     """Full director pass. Returns dict(script, clips=[paths], clip_max, report)."""
     W, H = (1280, 720) if aspect == "16:9" else (720, 1280)  # same as the final render: less RAM, no double scaling
     workdir = Path(workdir); workdir.mkdir(parents=True, exist_ok=True)
-    log("director: writing + critiquing script")
-    sc = write_script(topic or script[:120], secs, given=script if script and not topic else "")
+    P = progress or (lambda n: None)
+    log("director: writing + critiquing script"); P(3)
+    if script and keep_script:
+        sc = {"script": script, "draft": script, "critique": "kept as written", "hook_before": "", "hook_after": ""}
+    else:
+        sc = write_script(topic or script[:120], secs, given=script if script and not topic else "", style=style)
     text = sc["script"]
     lines = sentences(text)
     text = " ".join(lines)
-    log(f"director: planning {len(lines)} shots")
+    log(f"director: planning {len(lines)} shots"); P(9)
     look, shots = plan_shots(lines, topic or text[:120])
-    pools = candidates(shots, aspect != "16:9")
+    pools = candidates(shots, aspect != "16:9"); P(13)
     picks, nimg = score_and_pick(lines, shots, pools, look)
-    log(f"director: scored {nimg} candidates in one vision call")
+    log(f"director: scored {nimg} candidates in one vision call"); P(18)
+    ai = [None] * len(lines)
+    aimeta, provs = {}, set()
+    if visuals == "ai":
+        import aivisuals as aiv
+        import charlib
+        cast = [c for c in (chars or []) if c.get("look")]
+        ctopic = (topic or text[:120]) + ("" if not cast else " | Saved characters (use them exactly): " + charlib.lock_clause(cast))
+        aip, aimeta = aiv.prompts(lines, ctopic, ai_style, gem, aspect=aspect)
+        det = charlib.detect(lines, cast)
+        for i, cs in enumerate(det):  # lock each detected character's description into its scene prompt
+            if cs and i < len(aip):
+                aip[i] = charlib.lock_clause(cs) + " " + aip[i]
+        aimeta["chars"] = [[c["name"] for c in cs] for cs in det]
+        aimeta["char_refs"] = [[r for c in cs for r in c.get("refs", [])] for cs in det]
+        if cast:
+            log("director: characters per scene " + "; ".join(f"{i + 1}:{'+'.join(n) or '-'}" for i, n in enumerate(aimeta["chars"])))
+        for i, ov in enumerate((ai_prompts or [])[:len(lines)]):
+            if ov:
+                aip[i] = ov if "Story bible" in ov else f"{ov}. {aiv.STYLES.get(ai_style, '')}"
+        seed = aiv.seed_for(topic or text[:120])  # same seed + same style tokens on every shot = visual continuity
+        fl = {}
+        if flow:  # Flow (Nano Banana Pro / Veo) first, when the user's bridge is online
+            log("director: sending scenes to Google Flow via the Mac bridge"); P(18)
+            try:
+                fl = flow(lines, aip, aimeta) or {}
+            except Exception as e:
+                log(f"director: Flow bridge failed {type(e).__name__}")
+            if len(fl) < len(lines):
+                log(f"director: Using backup {'images' if free_ai else 'stock footage'} for {len(lines) - len(fl)} scene(s) (Flow not available)")
+        for i in range(len(lines)):
+            if i in fl:
+                ai[i] = {"path": fl[i]["path"], "prompt": aip[i], "provider": fl[i]["model"], "video": fl[i].get("video"),
+                         "score": fl[i].get("score")}; provs.add("Google Flow")
+                continue
+            if picks[i] and picks[i].get("raw", 0) >= 8 and not (ai_prompts and i < len(ai_prompts) and ai_prompts[i]):
+                continue  # hybrid: a stock clip only when it is a near-perfect match
+            if not free_ai:  # free image models are admin-only; other users get stock for unfilled scenes
+                continue
+            try:
+                path, prov, pr, scv, tries = aiv.generate_verified(aip[i], lines[i], W, H, seed, gem, log=log)
+                ai[i] = {"path": path, "prompt": pr, "provider": prov, "score": scv, "tries": len(tries), "backup": bool(flow)}
+                provs.add(prov)
+            except Exception:
+                pass
+            P(18 + int(2 * (i + 1) / len(lines)))
+        log(f"director: AI images for {sum(1 for a in ai if a)}/{len(lines)} shots via {', '.join(sorted(provs)) or 'none'}")
     words, total = word_times(text, voice, rate, str(workdir / f"{jid[:8]}_probe.mp3"))
     durs = sentence_durations(lines, words, total)
-    clips, rep = [], []
+    XF = 0.4
+    fades = fade_plan(lines, durs, XF) if crossfade else [False] * len(lines)
+    log("director: cutting clips")
+    clips, rep, cfade = [], [], []
     for i, (l, s, p, d) in enumerate(zip(lines, shots, picks, durs)):
+        if ai[i]:
+            out = workdir / f"{jid[:8]}_{i:02d}.mp4"
+            try:
+                cut(ai[i]["path"], str(out), d + (XF if fades[i] else 0), W, H, look, still=not ai[i].get("video"), kb=i, anim=ai_style == "stick")
+                clips.append(str(out)); cfade.append(fades[i])
+                rep.append({"line": l, "visual": "AI", "prompt": ai[i]["prompt"], "provider": ai[i]["provider"], "score": ai[i].get("score"),
+                            "tries": ai[i].get("tries", 1), "backup": ai[i].get("backup", False), "dur": round(d, 2),
+                            "characters": (aimeta.get("chars") or [[]] * 99)[i] if i < len(aimeta.get("chars") or []) else []})
+                continue
+            except Exception as e:
+                log(f"director: AI clip {i} failed {type(e).__name__}")
         if not p:
             continue
         raw = workdir / f"{jid[:8]}_raw{i:02d}.mp4"
         try:
             raw.write_bytes(_get(p["url"], 90))
             out = workdir / f"{jid[:8]}_{i:02d}.mp4"
-            cut(str(raw), str(out), d, W, H, look, zoom=(i % 2 == 0))
-            clips.append(str(out))
+            cut(str(raw), str(out), d + (XF if fades[i] else 0), W, H, look, zoom=(i % 2 == 0))
+            clips.append(str(out)); cfade.append(fades[i])
+            if progress:
+                progress(20 + int(9 * (i + 1) / len(lines)))
         except Exception as e:
             log(f"director: clip {i} failed {type(e).__name__}")
         finally:
             raw.unlink(missing_ok=True)
         rep.append({"line": l, "visual": s.get("visual"), "queries": s.get("queries"), "pick": p.get("id"), "q": p.get("q"),
                     "score": p.get("score"), "why": p.get("why"), "dur": round(d, 2)})
+    clip_max = math.ceil(max(durs)) + 1
+    if crossfade and len(clips) >= 2 and any(cfade[:-1]):
+        try:
+            joined = str(workdir / f"{jid[:8]}_joined.mp4")
+            n = join(clips, cfade, XF, joined)
+            log(f"director: joined {len(clips)} clips with {n} crossfades")
+            for c in clips:
+                Path(c).unlink(missing_ok=True)
+            clips, clip_max = [joined], math.ceil(probe(joined)[2]) + 2
+        except Exception as e:
+            err = getattr(e, "stderr", b"") or b""
+            err = " | ".join(x for x in err.decode("utf8", "replace").splitlines() if "onfig" not in x)[-300:]
+            log(f"director: crossfade join failed {type(e).__name__} {err}, using hard cuts")
     print("director report:", json.dumps({"look": look, "critique": sc["critique"], "hook": [sc["hook_before"], sc["hook_after"]], "shots": rep})[:6000], flush=True)
-    return {"script": text, "clips": clips, "clip_max": math.ceil(max(durs)) + 1, "look": look, "report": rep,
-            "draft": sc["draft"], "critique": sc["critique"], "hook": [sc["hook_before"], sc["hook_after"]]}
+    return {"script": text, "clips": clips, "clip_max": clip_max, "look": look, "report": rep,
+            "ai": aimeta, "providers": sorted(provs), "draft": sc["draft"], "critique": sc["critique"], "hook": [sc["hook_before"], sc["hook_after"]]}

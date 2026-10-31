@@ -48,3 +48,4 @@ htmlcov/
 USERS_PRIVATE.txt
 /*.png
 .github/
+__pycache__/

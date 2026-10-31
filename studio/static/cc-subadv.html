@@ -1,0 +1,29 @@
+<details class=cc-adv id=sa-panel style="grid-column:1/-1"><summary>Subtitle advanced</summary><div class=cc-grid2>
+<div class=cc-field><label>Shadow depth</label><input id=sa_shadow type=range min=0 max=8 step=0.5 value=0></div>
+<div class=cc-field><label>Box opacity (%)</label><input id=sa_bgop type=range min=0 max=100 value=67></div>
+<div class=cc-field><label>Box padding (px)</label><input id=sa_pad type=range min=0 max=40 value=10></div>
+<div class=cc-field><label>Box corner radius <small>(preview only, see note)</small></label><input id=sa_rad type=range min=0 max=30 value=0></div>
+<div class=cc-field><label>Letter spacing</label><input id=sa_sp type=range min=-5 max=20 step=0.5 value=0></div>
+<div class=cc-field><label>Line spacing <small>(preview only)</small></label><input id=sa_lh type=range min=0.8 max=2 step=0.05 value=1.15></div>
+<div class=cc-field><label>Words per line (0 = auto)</label><input id=sa_wpl type=number min=0 max=12 value=0></div>
+<div class=cc-field><label>Max lines</label><select id=sa_ml><option>1</option><option selected>2</option><option>3</option></select></div>
+<div class=cc-field><label>Animation</label><select id=sa_anim><option value="">None</option><option value=pop>Pop</option><option value=fade>Fade</option><option value=bounce>Bounce</option></select></div>
+<div class=cc-field><label>Side margins (%)</label><input id=sa_mg type=range min=0 max=30 value=8></div>
+<div class=cc-field><label>Vertical position (% from top)</label><input id=sa_y type=range min=0 max=100 value=70><small class=cc-sub style="font-size:11px">Moving this switches position to “Custom %”.</small></div>
+<div class=cc-field><label>My presets</label><div style="display:flex;gap:6px"><select id=sa_my style="flex:1"><option value="">—</option></select><button type=button class=sp-btn id=sa_save>Save</button><button type=button class=sp-btn id=sa_del style="background:#3a3360">✕</button></div></div>
+<p class=cc-sub style="grid-column:1/-1;font-size:12px;margin:0">Emoji: plain emoji in your script are kept and show as black-and-white symbols (the free video engine, libass, can’t draw colour emoji). Rounded box corners and line spacing show in this preview only; the video uses square corners and the font’s own spacing.</p>
+</div></details>
+<script>(()=>{const g=i=>document.getElementById(i),on=()=>g('sa-panel')&&true;
+window.ccSubAdv=()=>({sub_adv:true,sub_shadow:+g('sa_shadow').value,sub_bg_opacity:+g('sa_bgop').value,sub_pad:+g('sa_pad').value,sub_radius:+g('sa_rad').value,sub_spacing:+g('sa_sp').value,sub_lh:+g('sa_lh').value,words_per_line:+g('sa_wpl').value,max_lines:+g('sa_ml').value,sub_anim:g('sa_anim').value,sub_margin:+g('sa_mg').value});
+window.ccSubAdvDraw=(T,box,k,H,s)=>{const A=ccSubAdv();if(A.sub_shadow>0&&!T.style.textShadow.includes('px')||A.sub_shadow>0)T.style.textShadow=`${A.sub_shadow*2*k*2}px ${A.sub_shadow*2*k*2}px 0 ${s.sub_stroke||'#000'}`;
+T.style.letterSpacing=(A.sub_spacing*k*2)+'px';T.style.lineHeight=A.sub_lh;T.style.left=T.style.right=A.sub_margin+'%';
+if(box!==T){const a=Math.round(A.sub_bg_opacity*2.55).toString(16).padStart(2,'0');box.style.background=(s.sub_bg||'#000000')+a;box.style.padding=(A.sub_pad*k*2)+'px';box.style.borderRadius=(A.sub_rad||A.sub_radius)*k*2+'px'}
+const t=(Date.now()%1400)/1400;T.style.opacity=A.sub_anim=='fade'?Math.min(1,t*3):1;
+if(A.sub_anim=='pop')T.style.scale=t<.15?0.8+t*1.3:1;else if(A.sub_anim=='bounce')T.style.translate='0 '+(t<.2?(1-t/.2)*12:0)+'px';else{T.style.scale='';T.style.translate=''}};
+g('sa_y').addEventListener('input',()=>{const p=g('sub_pos'),c=g('sub_custom');if(p)p.value='custom';if(c)c.value=g('sa_y').value});
+const KEY='mps_subpresets',ids=['sa_shadow','sa_bgop','sa_pad','sa_rad','sa_sp','sa_lh','sa_wpl','sa_ml','sa_anim','sa_mg','sa_y','sub_style','sub_pos','sub_custom','sub_font','sub_color','sub_stroke','sub_stroke_w','sub_bg_on','sub_bg','sub_hl','sub_upper','sub_mode','font_size','sub_bold','sub_italic'];
+const L=()=>JSON.parse(localStorage.getItem(KEY)||'{}'),fill=()=>{const m=L();g('sa_my').innerHTML='<option value="">—</option>'+Object.keys(m).map(n=>`<option>${n.replace(/[<>&"]/g,'')}</option>`).join('')};fill();
+g('sa_save').onclick=()=>{const n=(prompt('Name this subtitle preset')||'').trim().slice(0,30);if(!n)return;const v={};ids.forEach(i=>{const e=g(i);if(e)v[i]=e.tagName=='BUTTON'?e.dataset.on:e.value});v._p=window.ccPreset||'';const m=L();m[n]=v;localStorage.setItem(KEY,JSON.stringify(m));fill();g('sa_my').value=n};
+g('sa_del').onclick=()=>{const m=L();delete m[g('sa_my').value];localStorage.setItem(KEY,JSON.stringify(m));fill()};
+g('sa_my').onchange=()=>{const v=L()[g('sa_my').value];if(!v)return;for(const i in v){const e=g(i);if(!e)continue;if(e.tagName=='BUTTON'){e.dataset.on=v[i];e._r&&e._r()}else e.value=v[i]}window.ccPreset=v._p||''};
+document.addEventListener('DOMContentLoaded',()=>{const prev=window.ccExtra;window.ccExtra=b=>Object.assign({},prev?prev(b):{},ccSubAdv())})})()</script>

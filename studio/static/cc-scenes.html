@@ -19,7 +19,11 @@
 <div class=sc-tools><button type=button id=sc_hook>🎣 Check my hook</button><button type=button id=sc_plan>🎬 Match footage per sentence</button></div>
 <div class="sc-panel sc-hook" id=sc_hookp></div>
 <div class=sc-panel id=sc_scp><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>Scene editor</b><span style="font-size:12px;color:#9c97c0">Swap, re-search, upload your own clip/image (images get a Ken Burns zoom), or reorder. These clips are used in this order.</span><button type=button id=sc_off style="background:none;border:0;color:#9c97c0;cursor:pointer">✕ Don't use</button></div><div class=sc-list id=sc_list></div>
-<div style="margin-top:10px;display:flex;gap:8px"><button type=button id=sc_add style="background:#1c1936;color:#e9e6ff;border:1px solid #39345f;border-radius:10px;padding:7px 12px">＋ Add my own clip/image as a scene</button></div></div>
+<div style="margin-top:10px;display:flex;gap:8px"><button type=button id=sc_add style="background:#1c1936;color:#e9e6ff;border:1px solid #39345f;border-radius:10px;padding:7px 12px">＋ Add my own clip/image as a scene</button>
+<label style="font-size:13px;color:#cfcae8;display:flex;align-items:center;gap:6px">AI image style <select id=sc_style style="background:#0b0a1a;color:#fff;border:1px solid #39345f;border-radius:8px;padding:5px"><option value=realistic>Realistic (cinematic photo)</option><option value=pixar>3D Pixar-style</option><option value=stick>Stick figure</option></select></label>
+<button type=button id=sc_allai style="background:#1c1936;color:#e9e6ff;border:1px solid #39345f;border-radius:10px;padding:7px 12px">🎨 AI image for every scene</button>
+<button type=button id=sc_flow style="background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;border:0;border-radius:10px;padding:7px 14px;font-weight:700">🎞 Send to Flow</button></div>
+<div id=sc_flowp style="display:none;margin-top:12px;background:#0f0d22;border:1px solid #39345f;border-radius:12px;padding:12px;font-size:13px;color:#cfcae8"></div></div>
 <input type=file id=sc_file accept="video/mp4,video/quicktime,video/webm,image/jpeg,image/png,image/webp" hidden style="display:none!important">
 <script>(()=>{const g=i=>document.getElementById(i),E=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let S=null,upAt=null;const curMode=()=>document.querySelector('#mode .on').dataset.v;
@@ -31,15 +35,20 @@ g('sc_hook').onclick=async()=>{if(!need())return;const p=g('sc_hookp');p.style.d
  p.querySelectorAll('button[data-i]').forEach(b=>b.onclick=()=>{const t=g('prompt').value;const i=t.indexOf(d.first.slice(0,40));const o=d.openers[+b.dataset.i];
   g('prompt').value=i>=0?t.slice(0,i)+o+t.slice(i+d.first.length):o+' '+t;b.textContent='✓ Applied';S&&(S[0]&&(S[0].text=o))})}catch(e){p.textContent=e.message}};
 function opt(s){return s.pick>=0&&s.options[s.pick]}
+function ctags(t){const C=(window.ccChars&&ccChars())||[],lo=' '+String(t||'').toLowerCase()+' ';
+ const hit=C.filter(c=>lo.includes(' '+c.name.toLowerCase())||(c.main&&/ (he|she|they|him|her|them|his|their) /.test(lo)));
+ return hit.length?`<div style="margin:4px 0">${hit.map(c=>`<span style="display:inline-block;font-size:11px;background:#3b2a6b;color:#e9d5ff;border-radius:99px;padding:2px 8px;margin-right:4px">👤 ${E(c.name)}</span>`).join('')}</div>`:''}
 function draw(){const L=g('sc_list');L.innerHTML=S.map((s,i)=>{const o=opt(s);const th=s.up?`/uploads/${s.up.id}.thumb.jpg`:(o?o.thumb:'');
  return `<div class=sc-row data-i=${i}><div><div class=n>${i+1}</div><div class=ord><button type=button data-a=up title="Move up">↑</button><button type=button data-a=dn title="Move down">↓</button><button type=button data-a=del title="Remove">✕</button></div></div>
  <div class=th style="background-image:url('${E(th)}')">${s.up?`<small>${s.up.kind=='image'?'Your image · Ken Burns':'Your clip'}</small>`:(o?'':'<small>No match</small>')}</div>
- <div><div class=tx>${E(s.text)||'<i>(extra scene)</i>'}</div><div class=ctl><input type=text value="${E(s.q)}" data-a=q><button type=button data-a=rs>🔍 Re-search</button><button type=button data-a=sw>⟳ Swap</button><button type=button data-a=upl>⬆ Upload</button></div>
+ <div><div class=tx>${E(s.text)||'<i>(extra scene)</i>'}</div>${ctags(s.text)}<div class=ctl><input type=text value="${E(s.q)}" data-a=q><button type=button data-a=rs>🔍 Re-search</button><button type=button data-a=sw>⟳ Swap</button><button type=button data-a=upl>⬆ Upload</button><button type=button data-a=ai ${window.ccAiGate?'disabled title="Connect your Google Flow (Account page) to use AI images"':'title="Draw this sentence with a free AI image model"'}>🎨 ${s.up&&s.up.ai?'Regenerate':'AI image'}</button>${s.flow?'<small style="color:#7ee7a8">✓ from Flow</small>':''}${s.up&&s.up.score!=null&&s.up.score>=0?`<small style="color:${s.up.score>=7?'#7ee7a8':'#fbbf24'}">match ${s.up.score}/10${s.up.provider?' · '+E(s.up.provider):''}</small>`:''}</div>
+ ${s.up&&s.up.prompt?`<details style="margin-top:6px"><summary style="font-size:12px;color:#9c97c0;cursor:pointer">✏️ Image prompt (edit, then Regenerate)</summary><textarea data-a=pr rows=4 style="width:100%;background:#0b0a1a;color:#fff;border:1px solid #39345f;border-radius:8px;font-size:12px;padding:6px">${E(s.up.prompt)}</textarea></details>`:''}
  ${s.up?'':`<div class=sc-strip>${s.options.map((x,k)=>`<img src="${E(x.thumb)}" data-k=${k} class="${k==s.pick?'on':''}">`).join('')}</div>`}</div></div>`}).join('');
  L.querySelectorAll('.sc-row').forEach(r=>{const i=+r.dataset.i,s=S[i];r.querySelectorAll('button').forEach(b=>b.onclick=async()=>{const a=b.dataset.a;
   if(a=='up'&&i>0){[S[i-1],S[i]]=[S[i],S[i-1]];draw()}if(a=='dn'&&i<S.length-1){[S[i+1],S[i]]=[S[i],S[i+1]];draw()}if(a=='del'){S.splice(i,1);draw()}
   if(a=='sw'){s.up=null;if(s.options.length)s.pick=(s.pick+1)%s.options.length;draw()}
   if(a=='upl'){upAt=i;g('sc_file').click()}
+  if(a=='ai'){b.textContent='🎨 Painting…';b.disabled=true;try{const d=await post('/api/ai_image',{text:s.text||s.q,prompt:(r.querySelector('textarea')||{}).value||'',topic:g('prompt').value.slice(0,160),aspect:g('aspect').value,style:g('sc_style').value,seed:(s.up&&s.up.ai)?0:window.ccSeed});s.up=Object.assign(d,{ai:1,kind:'image'})}catch(e){g('msg').textContent=e.message}draw()}
   if(a=='rs'){s.q=r.querySelector('input').value;b.textContent='…';try{const d=await post('/api/scenes',{q:s.q,aspect:g('aspect').value});s.options=d.options;s.pick=d.options.length?0:-1;s.up=null}catch(e){g('msg').textContent=e.message}draw()}});
   r.querySelector('input').oninput=e=>s.q=e.target.value;r.querySelectorAll('.sc-strip img').forEach(im=>im.onclick=()=>{s.pick=+im.dataset.k;draw()})})}
 g('sc_file').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;g('msg').textContent='Uploading '+f.name+'…';const fd=new FormData();fd.append('file',f);
@@ -49,6 +58,34 @@ g('sc_add').onclick=()=>{upAt=null;g('sc_file').click()};
 g('sc_off').onclick=()=>{S=null;g('sc_scp').style.display='none'};
 g('sc_plan').onclick=async()=>{if(!need())return;const p=g('sc_scp'),L=g('sc_list');p.style.display='block';L.innerHTML='Splitting into scenes and finding matching footage…';
  try{S=(await post('/api/scenes',{script:g('prompt').value,aspect:g('aspect').value})).scenes;draw()}catch(e){L.textContent=e.message}};
-window.ccExtra=b=>{if(!S||!S.length||curMode()!='script')return{};const sc=S.map(s=>({src:s.up?'upload:'+s.up.id:(opt(s)?opt(s).url:'')})).filter(x=>x.src);return sc.length?{scenes:sc}:{}};
+window.ccSeed=Math.floor(Math.random()*999999);
+g('sc_allai').onclick=async()=>{if(!S)return;const b=g('sc_allai');for(let i=0;i<S.length;i++){if(!S[i].text)continue;b.textContent=`🎨 Painting ${i+1}/${S.length}…`;try{const d=await post('/api/ai_image',{text:S[i].text,topic:g('prompt').value.slice(0,160),aspect:g('aspect').value,style:g('sc_style').value,seed:window.ccSeed});S[i].up=Object.assign(d,{ai:1,kind:'image'});draw()}catch(e){g('msg').textContent=e.message;break}}b.textContent='🎨 AI image for every scene'};
+let FJ=null,FT=null;
+g('sc_flow').onclick=async()=>{if(!S||!S.length)return;const P=g('sc_flowp');P.style.display='block';P.innerHTML='Writing Flow-ready prompts (same characters, style and setting in every scene)…';
+ try{FJ=await post('/api/flow/job',{scenes:S.map(s=>({text:s.text||s.q})),topic:g('prompt').value.slice(0,300),aspect:g('aspect').value,style:g('sc_style').value});flowDraw();clearInterval(FT);FT=setInterval(flowPoll,6000)}catch(e){P.textContent=e.message}};
+function flowDraw(st){const P=g('sc_flowp'),n=FJ.scenes,f=st?st.filled.filter(Boolean).length:0;
+ P.innerHTML=`<b style="color:#fff">Flow job ${E(FJ.id)}</b> · ${n} scenes · ${E(FJ.aspect)} · ${FJ.duration}s each<br>
+ <div style="margin:8px 0;display:flex;gap:6px;flex-wrap:wrap"><a class=dl href="/api/flow/${FJ.id}/export.txt" download>⬇ Prompts .txt (VEO Automation)</a><a class=dl href="/api/flow/${FJ.id}/export.csv" download>⬇ .csv</a><a class=dl href="/api/flow/${FJ.id}/export.json" download>⬇ Job file for flow-bridge (.json)</a><button type=button id=fl_copy>📋 Copy prompts</button><button type=button id=fl_key>💻 Connect my Mac</button></div><div id=fl_keyp></div>
+ <div>Upload token (for the Mac helper, shown once): <code style="background:#000;padding:2px 6px;border-radius:6px;user-select:all">${E(FJ.token||'(hidden, already shown)')}</code></div>
+ <div style="margin-top:6px;color:#9c97c0">1) In Flow, open VEO Automation → Text to Video → Upload .txt → Run. 2) Leave <code>flow-bridge</code> running on your Mac: clips land here automatically.</div>
+ <div style="margin:8px 0;font-size:12px;color:#9c97c0">Defaults: images → <b>${E(FJ.models.find((m,i)=>FJ.kinds[i]=='image')||'Nano Banana Pro')}</b>, videos → <b>Veo 3.1 - Lite</b> (or Omni Flash). Change any scene:</div>
+ <div style="display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto">${FJ.kinds.map((k,i)=>`<div style="display:flex;gap:6px;align-items:center"><b style="width:22px;color:#a855f7">${i+1}</b>
+  <select data-fi=${i} style="background:#0b0a1a;color:#fff;border:1px solid #39345f;border-radius:6px;padding:3px">${[['image','Image · Nano Banana Pro'],['video','Video · Veo 3.1 - Lite'],['omni','Video · Omni Flash']].map(([v,t])=>`<option value=${v} ${(v==k&&!(k=='video'&&/Omni/.test(FJ.models[i])))||(v=='omni'&&/Omni/.test(FJ.models[i]))?'selected':''}>${t}</option>`).join('')}</select>
+  <span style="flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis" title="${E(FJ.prompts[i])}">${E(FJ.prompts[i])}</span>${st&&st.filled[i]?`<span style="color:#7ee7a8">✓${st.filled[i].score!=null?' '+st.filled[i].score+'/10':''}</span>`:''}</div>`).join('')}</div>
+ <div style="margin-top:10px;font-size:15px;color:#fff" id=fl_st>${f>=n?'✅ All Flow clips are in.':`⏳ Waiting for Flow clips ${f}/${n}`}</div>
+ ${f>=n?'<button type=button id=fl_go style="margin-top:8px;background:#22c55e;color:#04110a;border:0;border-radius:10px;padding:8px 16px;font-weight:800">▶ Render now</button>':''}`;
+ P.querySelectorAll('a.dl,#fl_copy').forEach(a=>a.style.cssText='background:#1c1936;color:#e9e6ff;border:1px solid #39345f;border-radius:10px;padding:6px 10px;text-decoration:none;cursor:pointer;font-size:13px');
+ g('fl_copy').onclick=()=>{navigator.clipboard.writeText(FJ.prompts.join('\n\n'));g('fl_copy').textContent='✓ Copied'};
+ g('fl_key').onclick=async()=>{const d=await post('/api/flow/key',{});g('fl_keyp').innerHTML=`<div style="margin:6px 0;padding:8px;background:#000;border-radius:8px;font-size:12px">1. Install (Terminal, once): <code style="user-select:all">${E(d.install)}</code><br>2. Connect: <code style="user-select:all">${E(d.run)}</code><br>3. When asked, paste this bridge key (shown once): <code style="user-select:all">${E(d.key)}</code></div>`};
+ P.querySelectorAll('select[data-fi]').forEach(el=>el.onchange=async()=>{const i=+el.dataset.fi,v=el.value;const d=await post('/api/flow/'+FJ.id+'/scene',{i,type:v=='omni'?'video':v,video_model:v=='omni'?'omni':'lite'});FJ.kinds[i]=d.type;FJ.models[i]=d.model;FJ.prompts[i]=d.prompt});
+ const go=g('fl_go');if(go)go.onclick=()=>{clearInterval(FT);(document.getElementById('go')||document.querySelector('button[type=submit]')).click()}}
+async function flowPoll(){if(!FJ)return;try{const r=await fetch('/api/flow/'+FJ.id);const st=await r.json();if(!r.ok)return;
+ st.filled.forEach((u,i)=>{if(u&&S[i]&&!(S[i].up&&S[i].up.id==u.id)){S[i].up=u;S[i].flow=1}});draw();flowDraw(st);if(st.filled.every(Boolean))clearInterval(FT)}catch(e){}}
+const vis=()=>({visuals:g('visuals')?g('visuals').value:'ai',ai_style:g('ai_style')?g('ai_style').value:'realistic',engine:g('engine')?g('engine').value:'flow'});
+(async()=>{if(!g('engine'))return;const a=g('aspect'),v=g('visuals');a.addEventListener('change',()=>{v.value=a.value=='16:9'?'stock':'ai'});
+ const dot=g('eng_dot');const ref=async()=>{try{const e=await (await fetch('/api/flow/engine')).json();g('engine').value=e.engine;
+  dot.textContent=e.engine!='flow'?'':e.online?'● Mac bridge online':e.connected?'○ bridge offline: using backup images':'○ not connected';dot.style.color=e.online?'#7ee7a8':'#fbbf24';dot.title=e.connected?'':'Scene editor → Send to Flow → Connect my Mac'}catch(_){}};
+ g('engine').onchange=async()=>{await post('/api/flow/engine',{engine:g('engine').value});ref()};ref();setInterval(ref,30000)})();
+window.ccExtra=b=>{if(!S||!S.length||curMode()!='script')return vis();const sc=S.map(s=>({src:s.up?'upload:'+s.up.id:(opt(s)?opt(s).url:'')})).filter(x=>x.src);return sc.length?Object.assign(vis(),{scenes:sc}):vis()};
 window.ccScenesReset=()=>{S=null;g('sc_scp').style.display='none';g('sc_hookp').style.display='none'};
 })()</script>

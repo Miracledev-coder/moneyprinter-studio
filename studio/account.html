@@ -22,6 +22,12 @@ ul.fine{color:#a6a1c0;font-size:13px;padding-left:18px;margin:12px 0 0}ul.fine l
 <ul class=fine><li>The app only asks for <b>drive.file</b>: it can see the files it creates, nothing else in your Drive.</li>
 <li>Your connection is encrypted on the server and only used for your own videos. It is never sent to the browser.</li>
 <li>Disconnecting stops new uploads and revokes access. Files already in your Drive stay there.</li></ul></section>
+<section class=card id=flowcard><h2>Google Flow (AI visuals) <span class=pill id=fpill>…</span></h2>
+<p id=fdesc>Checking…</p><div id=facts></div><div id=fcode></div>
+<ul class=fine><li>Flow is linked <b>per account</b>, like Drive. Your AI scenes are made in <b>your own</b> Google Flow account by a small helper on your Mac or PC; Studio never sees your Google password.</li>
+<li>The pairing code works once and expires in 10 minutes. Studio stores only a scrambled (hashed) copy of the helper’s key.</li>
+<li>Your Flow jobs go only to your helper, and it can only upload into your own scenes. Unlink stops the helper at once.</li>
+<li id=fnote></li></ul></section>
 <section class=card><h2>Session</h2><p>You stay signed in for 30 days if “Remember me” was ticked.</p><a class="btn ghost" href="/logout">Sign out</a> {{ADMIN}}</section>
 </main></div></div>
 <script>
@@ -35,5 +41,21 @@ function show(d){const p=g('pill');
  else{p.className=d.mode==='admin'?'pill mid':'pill warn';p.textContent=d.mode==='admin'?'Studio Drive':'Server only';
   g('desc').innerHTML=d.mode==='admin'?`Your videos are saved in the studio’s shared Drive (<b>${d.folder}</b>). Connect your own Google Drive to keep them in your account.`:'⚠️ Your videos are only stored on the server and can be lost when it restarts. Connect your Google Drive to keep them safe.';
   g('acts').innerHTML=d.can_connect?'<a class=btn href="/oauth/google/start">Connect my Google Drive</a>':'<p style="color:#a6a1c0">Google Drive is not set up on this server yet. Ask Miracle.</p>'}}
+const esc=t=>String(t||'').replace(/[<>&"]/g,'');
+function ago(t){if(!t)return 'never';const s=Math.round(Date.now()/1000-t);return s<90?'just now':s<3600?Math.round(s/60)+' min ago':s<86400?Math.round(s/3600)+' h ago':new Date(t*1000).toLocaleString()}
+async function fload(){const d=await (await fetch('/api/flow/status')).json(),f=await (await fetch('/api/features')).json(),p=g('fpill');
+ g('fnote').innerHTML=f.free_models?'You are the studio owner: free image models stay available as a backup.':'Without a linked Flow, AI visuals are turned off for your account. Stock footage and your own uploads still work.';
+ if(d.connected){p.className='pill '+(d.online?'ok':'mid');p.textContent=d.online?'Connected · helper online':'Connected · helper offline';
+  g('fdesc').innerHTML=`Flow account: <b>${esc(d.label)||'(not named)'}</b>${d.device?' on <b>'+esc(d.device)+'</b>':''}. Last seen: <b>${ago(d.last_seen)}</b>.`+(d.online?'':' Start the helper on your computer to make AI scenes.');
+  g('facts').innerHTML='<button class="btn ghost" id=fre>Pair a different computer</button> <button class="btn danger" id=fun>Unlink</button>';
+  g('fun').onclick=async()=>{if(!confirm('Unlink Google Flow? The helper stops working and AI visuals turn off until you pair again.'))return;await fetch('/api/flow/link',{method:'DELETE'});g('fcode').innerHTML='';fload()};g('fre').onclick=pairNow}
+ else{p.className='pill warn';p.textContent='Not connected';g('fdesc').textContent='Connect your own Google Flow to use AI visuals (Nano Banana Pro images, Veo clips).';
+  g('facts').innerHTML='<button class=btn id=fpair>Connect my Google Flow</button>';g('fpair').onclick=pairNow}}
+async function pairNow(){const r=await fetch('/api/flow/pair',{method:'POST'}),d=await r.json();if(!r.ok){alert(d.error||'Failed');return}
+ g('fcode').innerHTML=`<div class=card style="margin-top:12px"><p>Your one-time code (expires in 10 min, shown only now):</p><p style="font:700 28px monospace;letter-spacing:4px">${esc(d.code)}</p>
+ <ol class=fine><li>Sign in to <b>your</b> Google account at labs.google/flow in Chrome.</li><li>Install the helper once (Terminal): <code>${esc(d.install)}</code></li>
+ <li>Run: <code>${esc(d.run)} --account "you@gmail.com"</code> and type the code.</li><li>Keep that window open. This page will show “helper online”.</li></ol></div>`;
+ const t0=Date.now(),w=setInterval(async()=>{const s=await (await fetch('/api/flow/status')).json();if(s.online||Date.now()-t0>600000){clearInterval(w);fload();if(s.online)g('fcode').innerHTML='<p>✅ Paired.</p>'}},5000)}
+fload();
 function load(){fetch('/api/drive').then(r=>r.json()).then(show)}load();
 </script></body></html>

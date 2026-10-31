@@ -1,0 +1,38 @@
+<details class=cc-adv id=ch-panel><summary>Characters <small id=ch-count style="color:var(--dim)"></small></summary>
+<p class=cc-sub style="font-size:12px;margin:6px 0">Saved to your account (and your Drive when connected) and reusable in every project. When a scene mentions a character by name (or “he/she/they” for the main one), the director locks their look into that scene’s prompt. With Google Flow, the reference images go in as Ingredients.</p>
+<div id=ch-list style="display:grid;gap:10px"></div>
+<button type=button class=sp-btn id=ch-new style="margin-top:8px">+ New character</button>
+<div id=ch-form hidden style="margin-top:10px;border:1px solid #2a2550;border-radius:12px;padding:12px"><div class=cc-grid2>
+<div class=cc-field><label>Name</label><input id=ch_name maxlength=40 placeholder="e.g. Ada"></div>
+<div class=cc-field><label>Style</label><select id=ch_style><option value=realistic>Realistic</option><option value=pixar>Pixar</option><option value=stick>Stick figure</option></select></div>
+<div class=cc-field><label>Age</label><input id=ch_age placeholder="early 30s"></div><div class=cc-field><label>Face</label><input id=ch_face placeholder="round face, warm smile, dimples"></div>
+<div class=cc-field><label>Hair</label><input id=ch_hair placeholder="short black coils"></div><div class=cc-field><label>Skin</label><input id=ch_skin placeholder="deep brown"></div>
+<div class=cc-field style="grid-column:1/-1"><label>Wardrobe & other details</label><input id=ch_ward placeholder="mustard ankara blazer, white sneakers"></div>
+<div class=cc-field><label><input type=checkbox id=ch_main> Main character (matches he/she/they)</label></div></div>
+<div style="display:flex;gap:8px;margin-top:8px"><button type=button class=sp-btn id=ch-save>Save</button><button type=button class=sp-btn id=ch-cancel style="background:#3a3360">Cancel</button></div><div id=ch-msg class=cc-sub style="font-size:12px"></div></div>
+</details>
+<script>(()=>{const g=i=>document.getElementById(i),E=t=>String(t||'').replace(/[<>&"]/g,'');let CS=[],edit=null,FREE=false;const use=new Set(JSON.parse(localStorage.getItem('mps_chars_use')||'null')||[]);let useAll=!localStorage.getItem('mps_chars_use');
+const F=['age','face','hair','skin','ward'],LB={age:'',face:'',hair:'hair:',skin:'skin:',ward:'wearing'};
+function look(){return F.map(k=>{const v=g('ch_'+k).value.trim();return v?(LB[k]?LB[k]+' ':'')+v:''}).filter(Boolean).join(', ')}
+function save_use(){localStorage.setItem('mps_chars_use',JSON.stringify([...use]))}
+function draw(){g('ch-count').textContent=CS.length?`(${CS.length})`:'';g('ch-list').innerHTML=CS.map(c=>`<div style="display:flex;gap:10px;align-items:center;border:1px solid #2a2550;border-radius:12px;padding:8px">
+<input type=checkbox data-use="${c.id}" ${useAll||use.has(c.id)?'checked':''} title="Use in this video">
+<div style="display:flex;gap:4px">${(c.refs||[]).map(r=>`<img src="/char/${E(r)}" style="width:44px;height:58px;object-fit:cover;border-radius:6px">`).join('')||'<span style="width:44px;height:58px;border-radius:6px;background:#1d1a35;display:inline-block"></span>'}</div>
+<div style="flex:1;min-width:0"><b>${E(c.name)}</b>${c.main?' <small>★ main</small>':''} <small style="color:var(--dim)">${E(c.style)}</small><div style="font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${E(c.look)}</div></div>
+<label class=sp-btn style="padding:6px 10px;font-size:12px">Upload ref<input type=file accept="image/*" data-ref="${c.id}" hidden></label>
+${FREE?`<button type=button class=sp-btn style="padding:6px 10px;font-size:12px" data-gen="${c.id}">Generate ref</button>`:''}
+<button type=button class=sp-btn style="padding:6px 10px;font-size:12px;background:#3a3360" data-ed="${c.id}">Edit</button><button type=button class=sp-btn style="padding:6px 10px;font-size:12px;background:#7f1d1d" data-del="${c.id}">✕</button></div>`).join('')||'<p class=cc-sub style="font-size:13px">No characters yet.</p>';
+g('ch-list').querySelectorAll('[data-use]').forEach(x=>x.onchange=()=>{if(useAll){CS.forEach(c=>use.add(c.id));useAll=false}x.checked?use.add(x.dataset.use):use.delete(x.dataset.use);save_use()});
+g('ch-list').querySelectorAll('[data-del]').forEach(x=>x.onclick=async()=>{if(!confirm('Delete this character?'))return;await fetch('/api/characters/'+x.dataset.del,{method:'DELETE'});load()});
+g('ch-list').querySelectorAll('[data-ed]').forEach(x=>x.onclick=()=>{const c=CS.find(c=>c.id==x.dataset.ed);edit=c.id;g('ch_name').value=c.name;g('ch_style').value=c.style;g('ch_main').checked=!!c.main;F.forEach(k=>g('ch_'+k).value='');g('ch_face').value=c.look;g('ch-form').hidden=false});
+g('ch-list').querySelectorAll('[data-ref]').forEach(x=>x.onchange=async()=>{const fd=new FormData();fd.append('file',x.files[0]);const r=await fetch(`/api/characters/${x.dataset.ref}/ref`,{method:'POST',body:fd});if(!r.ok)alert((await r.json()).error||'Upload failed');load()});
+g('ch-list').querySelectorAll('[data-gen]').forEach(x=>x.onclick=async()=>{x.disabled=true;x.textContent='Drawing…';const r=await fetch(`/api/characters/${x.dataset.gen}/generate`,{method:'POST'});if(!r.ok)alert((await r.json()).error||'Failed');load()})}
+async function load(){const r=await fetch('/api/characters');if(!r.ok)return;CS=(await r.json()).characters||[];draw()}
+g('ch-new').onclick=()=>{edit=null;['ch_name',...F.map(k=>'ch_'+k)].forEach(i=>g(i).value='');g('ch_main').checked=!CS.length;g('ch-form').hidden=false};
+g('ch-cancel').onclick=()=>g('ch-form').hidden=true;
+g('ch-save').onclick=async()=>{const r=await fetch('/api/characters',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:edit,name:g('ch_name').value,style:g('ch_style').value,main:g('ch_main').checked,look:look()})});const d=await r.json();if(!r.ok){g('ch-msg').textContent=d.error||'Failed';return}g('ch-form').hidden=true;load()};
+window.ccChars=()=>CS;window.ccCharsUse=()=>useAll?null:[...use];
+fetch('/api/features').then(r=>r.json()).then(f=>{FREE=!!f.free_models;window.ccAiGate=f.ai_gate;draw();
+ const v=g('visuals');if(f.ai_gate&&v){[...v.options].forEach(o=>{if(o.value=='ai'){o.disabled=true;o.textContent+=' (connect Flow)'}});if(v.value=='ai')v.value='stock';
+  const n=document.createElement('a');n.href='/account';n.className='cc-sub';n.style.cssText='display:block;font-size:12px;color:#fbbf24;margin:6px 2px';n.textContent='🔒 Connect your Google Flow to use AI visuals →';(v.closest('.cc-chip')||v).insertAdjacentElement('afterend',n)}});
+load();document.addEventListener('DOMContentLoaded',()=>{const prev=window.ccExtra;window.ccExtra=b=>{const o=Object.assign({},prev?prev(b):{});const u=ccCharsUse();if(u)o.characters=u;return o}})})()</script>

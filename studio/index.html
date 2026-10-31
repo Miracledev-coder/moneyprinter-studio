@@ -8,7 +8,7 @@
 <div class=cc-prompt>
 <textarea id=prompt placeholder="e.g. 3 habits of calm, productive people"></textarea>
 <div class=cc-bar>
-<label class=cc-chip title="Aspect ratio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="3" width="10" height="18" rx="2"/></svg><select id=aspect><option value="9:16">9:16</option><option value="16:9">16:9</option></select></label>
+<label class=cc-chip title="Aspect ratio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="3" width="10" height="18" rx="2"/></svg><select id=aspect><option value="9:16">9:16</option><option value="16:9">16:9</option></select></label><label class=cc-chip title="Visuals: AI images per sentence, or stock footage"><select id=visuals><option value=ai>🎨 AI visuals</option><option value=stock>🎞 Stock footage</option></select></label><label class=cc-chip title="AI image style"><select id=ai_style><option value=realistic>Realistic</option><option value=pixar>3D Pixar-style</option><option value=stick>Stick figure</option></select></label><label class=cc-chip title="Visual engine: Google Flow (Nano Banana Pro + Veo) via your Mac bridge, or free models"><select id=engine><option value=flow>Flow · Nano Banana Pro + Veo</option><option value=free>Free models (FLUX)</option></select><span id=eng_dot style="font-size:11px;margin-left:4px;color:#9c97c0"></span></label>
 <label class=cc-chip title="Length"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><select id=length><option value=15>15s</option><option value=30>30s</option><option value=60>60s</option><option value=90>90s</option><option value=120>2 min</option><option value=180>3 min</option></select></label>
 <label class=cc-chip title="Voice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><select id=voice>{{VOICES}}</select></label>
 <span class=cc-chip id=subs data-on=1 title="Subtitles"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 14h4M13 14h4"/></svg>Subtitles</span>
@@ -30,7 +30,7 @@
 <div class=cc-field><label>Subtitle size</label><input id=font_size type=number min=24 max=120 value=48></div>
 <div class=cc-field><label>Clip duration (s)</label><input id=clip type=number min=2 max=10 value=4></div>
 <div class=cc-field><label>Speaking speed</label><select id=rate><option value=0.9>Slower</option><option value=1.0 selected>Normal</option><option value=1.1>Faster</option></select></div>
-</div></details></div>
+{{SUBADV}}</div></details>{{CHARS}}</div>
 {{SCENES}}
 <div class=cc-err id=msg style="text-align:center;margin-top:12px;font-size:14px"></div>
 <p class=cc-sub id=eta style="color:var(--dim);margin:8px 0 0"></p><p class=cc-sub style="color:var(--dim);margin:6px 0 0;font-size:12px">⚠️ The free server keeps only your recent videos and wipes them when it restarts, unless Google Drive is connected (videos marked “Saved to Drive” are kept). Download important videos.</p>
@@ -51,7 +51,7 @@ function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>'
 function card(j){const wide=j.aspect=='16:9'?' wide':'';let m;
  if(j.status=='done')m=`<video controls playsinline preload=metadata ${j.drive?`poster="/thumb/${j.id}"`:''} src="/video/${j.id}"></video>`;
  else if(j.status=='error')m=`<div class=cc-prog><div class=cc-err>Failed</div><div>${esc(j.error)}</div></div>`;
- else{const p=j.progress||0;const st=(j.part?`<b>${esc(j.part)}</b> · `:'')+(j.status=='queued'?`In queue · ${j.ahead||0} ahead`:(stages.filter(s=>p>=s[0]).pop()[1]+'…'));m=`<div class=cc-prog><div class=cc-ring></div><div>${st}</div><div class=cc-pbar><div style="width:${Math.max(3,p)}%"></div></div><div>${j.elapsed||0}s</div></div>`}
+ else{const p=j.progress||0;const st=(j.part?`<b>${esc(j.part)}</b> · `:'')+(j.status=='queued'?`In queue · ${j.ahead||0} ahead`:((j.stage?esc(j.stage):stages.filter(s=>p>=s[0]).pop()[1])+`… ${p}%`));m=`<div class=cc-prog><div class=cc-ring></div><div>${st}</div>${j.notice?`<div style="font-size:12px;color:#fbbf24">⚠ ${esc(j.notice)}</div>`:''}<div class=cc-pbar><div style="width:${Math.max(3,p)}%"></div></div><div>${j.elapsed||0}s</div></div>`}
  const right=j.status=='done'?`<a class=cc-dl href="/video/${j.id}?dl=1">Download</a>`:'';
  return `<div class=cc-card><div class="media${wide}">${m}</div><div class=meta><b title="${esc(j.title)}">${esc(j.title)}</b><div class=row><span>${j.aspect} · ${esc(j.voice)}${j.status=='done'?' · '+j.elapsed+'s':''}</span>${right}</div>${j.drive?'<div class=cc-drv>☁ Saved to Drive</div>':''}${j.yt?ytbox(j.yt):''}</div></div>`}
 function ytbox(y){const f=(l,v)=>`<div class=yt><div><small>${l}</small><button type=button onclick="navigator.clipboard.writeText(this.parentElement.nextElementSibling.value);this.textContent='Copied'">Copy</button></div><textarea readonly>${esc(v)}</textarea></div>`;return `<details class=cc-yt><summary>YouTube title, description & chapters</summary>${f('Title',y.title)}${f('Description',y.description)}${f('Chapters',y.chapters)}</details>`}

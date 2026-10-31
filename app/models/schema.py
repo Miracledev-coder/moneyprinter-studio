@@ -141,6 +141,11 @@ class VideoParams(BaseModel):
     bgm_type: Optional[str] = "random"
     bgm_file: Optional[str] = ""
     bgm_volume: Optional[float] = Field(default=0.2, allow_inf_nan=False)
+    # MoneyPrinter Studio polish (ffmpeg low-memory final render)
+    duck_music: Optional[bool] = False
+    watermark_file: Optional[str] = ""
+    end_card_text: Optional[str] = ""
+    output_hd: Optional[bool] = False
     # 视频配乐供应商共用提示词，WebUI 新任务统一写入该字段。保留下面的
     # Sonilo 专用字段以兼容旧任务记录和现有 CLI 参数。
     video_music_prompt: str = Field(default="", max_length=2000)
@@ -172,6 +177,17 @@ class VideoParams(BaseModel):
     subtitle_uppercase: bool = False
     subtitle_bold: bool = False
     subtitle_italic: bool = False
+    # Studio advanced subtitles (ASS/libass)
+    sub_shadow: float = 0.0
+    sub_bg_opacity: int = 67
+    sub_pad: int = 10
+    sub_spacing: float = 0.0
+    words_per_line: int = 0
+    max_lines: int = 2
+    sub_anim: Optional[str] = ""
+    sub_margin: int = 8
+    music_fade_in: float = 1.5
+    music_fade_out: float = 2.5
     n_threads: Optional[int] = 2
     paragraph_number: int = Field(default=1, ge=1, le=10)
     video_script_prompt: str = Field(default="", max_length=2000)
