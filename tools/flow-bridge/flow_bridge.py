@@ -20,6 +20,7 @@ STATE = Path.home() / ".flow-bridge"
 # Override with GFLOW_MODEL_MAP='{"Nano Banana Pro":"nano-pro"}' if a later gflow renames them.
 GFLOW_MODELS = {"Nano Banana Pro": "nano-pro", "Nano Banana 2": "nano2", "Nano Banana 2 Lite": "nano2-lite", "Imagen 4": "image4",
                 "Veo 3.1 - Lite": "veo-lite", "Veo 3.1 - Fast": "veo-fast", "Veo 3.1 - Quality": "veo-quality", "Omni Flash": "omni-flash"}
+BATCH_MODELS = {"nano2", "nano2.1", "nano-2.1", "nano-pro", "nano2-lite", "image4", "imagen4"}
 GFLOW_MODELS.update(json.loads(os.environ.get("GFLOW_MODEL_MAP", "{}") or "{}"))
 
 
@@ -299,6 +300,34 @@ def drive(job, folder, cap, pace=None):
     cf = STATE / f"count-{time.strftime('%Y-%m-%d')}.txt"
     used = int(cf.read_text() or 0) if cf.exists() else 0
     refs = sorted(str(p) for p in Path(folder).glob("ref-*"))
+    t0 = time.time()
+    batch = [sc for sc in job["scenes"] if not sc.get("filled") and sc.get("type") == "image" and not sc.get("characters")
+             and GFLOW_MODELS.get(sc.get("model", ""), "nano2") in BATCH_MODELS][:max(0, cap - used)]
+    if len(batch) > 1 and os.environ.get("FLOW_BATCH", "1") != "0":
+        # One `gflow run` = ONE Chrome session for all plain image scenes (gflow-cli locks a profile to one process, so
+        # parallel gflow processes would fail with "Profile locked"). Saves the ~30-60 s browser start per scene.
+        brief = (job.get("agent_brief") or "")[:400]
+        rows = [{"text": ((brief + "\n\n") if brief else "") + sc["prompt"][:1500], "aspect_ratio": job["aspect"],
+                 "model": GFLOW_MODELS.get(sc.get("model", ""), "nano2"), "count": 1,
+                 "output_filename": f"{sc['n']:02d}_scene.png"} for sc in batch]
+        cfgf = STATE / "batch.json"; cfgf.write_text(json.dumps({"prompts": rows}))
+        cmd = [gflow, "run", "--config", str(cfgf), "--output-dir", str(folder), "--continue-on-error", "--jitter", f"{pace[0]}-{pace[1]}"]
+        proj = flow_project(gflow)
+        if proj:
+            cmd += ["--project", proj]
+        hstat("working", f"Generating {len(batch)} image scenes in one Flow session ({', '.join(str(s['n']) for s in batch)})")
+        print(f"[auto] batch: {len(batch)} image scenes in one Flow session, {pace[0]}-{pace[1]} s apart …", flush=True)
+        r = _run(cmd, folder)
+        if r.returncode and proj and project_gone(r.out):
+            np = flow_project(gflow, fresh=True)
+            if np:
+                cmd[cmd.index("--project") + 1] = np; r = _run(cmd, folder)
+        for sc in batch:
+            if (Path(folder) / f"{sc['n']:02d}_scene.png").exists():
+                sc["filled"] = True; used += 1
+        cf.write_text(str(used))
+        print(f"[auto] batch done in {int(time.time() - t0)} s: {sum(1 for s in batch if s.get('filled'))}/{len(batch)} images"
+              + ("" if all(s.get("filled") for s in batch) else "; the rest are retried one by one"), flush=True)
     for sc in job["scenes"]:
         if not job_open(job["job"]):
             print(f"[auto] Job {job['job'][:8]} was stopped in Studio; skipping its remaining scenes."); job["stopped"] = True; return True
@@ -333,7 +362,7 @@ def drive(job, folder, cap, pace=None):
             cmd += ["--project", proj]
         if alias:
             cmd += ["--model", alias]
-        hstat("working", f"Generating scene {sc['n']}/{len(job['scenes'])}: {kind} · {model or 'Flow default'}")
+        hstat("working", f"Generating scene {sc['n']}/{len(job['scenes'])}: {kind} · {model or 'Flow default'} · {int(time.time() - t0)} s so far")
         print(f"[auto] scene {sc['n']}: {kind} · {model or 'Flow default'}{' · ' + str(len(my)) + ' character ref(s)' if my else ''} …", flush=True)
         r = _run(cmd, folder)
         if r.returncode == DRIFT:
@@ -351,9 +380,25 @@ def drive(job, folder, cap, pace=None):
                 got = recover(gflow, mid, out)
                 if got:
                     break
+            tries = 0
+            while not got and tries < 2 and used + 1 < cap and job_open(job["job"]):  # re-download failed: regenerate, SAME model
+                tries += 1; used += 1; cf.write_text(str(used))
+                print(f"[auto] scene {sc['n']}: re-download failed; regenerating with the same model ({tries}/2)", flush=True)
+                hstat("working", f"Scene {sc['n']}: regenerating ({tries}/2) with {model or 'Flow default'}")
+                time.sleep(random.randint(*pace))
+                r = _run(cmd, folder)
+                if out.exists() and not r.returncode:
+                    got = out
+                elif download_failed(r.out):
+                    for mid in media_ids(r.out):
+                        got = recover(gflow, mid, out) if kind != "image" else None
+                        if got:
+                            break
+                    ids = media_ids(r.out) or ids
             if got:
                 r = subprocess.CompletedProcess(cmd, 0); r.out = ""
             else:
+                hstat("error", f"Scene {sc['n']} failed after re-download + 2 regenerations. Use 'Regenerate scene' in Studio.")
                 _pending(_pending() + [{"job": job["job"], "scene": sc["n"], "media_id": m, "out": str(out)} for m in ids[:1]])
                 print(f"[auto] saved media id(s) {', '.join(m[:8] for m in ids) or '?'}; run  flow-bridge --recover  later (no credits)", flush=True)
         elif r.returncode and r.returncode not in (DRIFT, 124) and agent and not out.exists() and not model_rejected(r.out):
@@ -367,9 +412,19 @@ def drive(job, folder, cap, pace=None):
             new = sorted((STATE / "tmp").glob("*.*"), key=lambda p: p.stat().st_mtime)
             if new:
                 shutil.move(str(new[-1]), str(out.with_suffix(new[-1].suffix)))
+        k = 0
+        while r.returncode and r.returncode not in (DRIFT,) and not out.exists() and not download_failed(r.out) \
+                and not model_rejected(r.out) and k < 2 and used + 1 < cap and job_open(job["job"]):
+            k += 1; used += 1
+            print(f"[auto] scene {sc['n']} failed (exit {r.returncode}); regenerating with the same model ({k}/2)", flush=True)
+            hstat("working", f"Scene {sc['n']}: retry {k}/2 with {model or 'Flow default'}")
+            time.sleep(random.randint(*pace)); r = _run(cmd, folder)
         used += 1; cf.write_text(str(used))
-        if r.returncode:
+        if r.returncode and not out.exists():
+            hstat("error", f"Scene {sc['n']} failed after retries. Use 'Regenerate scene' in Studio.")
             print(f"[auto] scene {sc['n']} failed (exit {r.returncode}); it stays open for a manual upload.")
+        if not any(not x.get("filled") and x["n"] > sc["n"] for x in job["scenes"]):
+            continue
         wait = random.randint(*pace)
         hstat("pacing", f"Scene {sc['n']} done · next in {wait}s (human pace)")
         print(f"[auto] pausing {wait}s so Flow sees a human pace"); time.sleep(wait)
@@ -381,7 +436,7 @@ KEYF = Path.home() / ".flow-bridge" / "key"
 BASEF = Path.home() / ".flow-bridge" / "base"
 LOGF = Path.home() / ".flow-bridge" / "helper.log"
 LABEL = os.environ.get("FLOW_ACCOUNT", "")
-VERSION = "2026.10.31.5"
+VERSION = "2026.10.31.6"
 DEFAULT_BASE = "https://moneyprinter-studio.onrender.com"
 RAW = "https://raw.githubusercontent.com/Miracledev-coder/moneyprinter-studio/main/tools/flow-bridge/flow_bridge.py"
 AGENT = "com.calmcraze.flowbridge"
