@@ -11,7 +11,7 @@ command -v uv >/dev/null 2>&1 || [ -x "$B/uv" ] || curl -LsSf https://astral.sh/
 export PATH="$B:$HOME/.cargo/bin:$PATH"
 echo "2/4  Installing gflow-cli (drives Google Flow in your own Chrome)…"
 curl -fsSL "$RAW/constraints.txt" -o "$D/constraints.txt" || fail "Could not download the version list. Check your internet connection and try again."
-uv tool install --python 3.12 --upgrade --only-binary :all: --constraints "$D/constraints.txt" gflow-cli==0.92.1 \
+uv tool install --python 3.12 --upgrade --no-build --constraints "$D/constraints.txt" gflow-cli==0.92.1 \
   || fail "Could not install gflow-cli. If it mentions 'developer tools', cancel any Xcode pop-up: it is NOT needed. Then run the installer again."
 echo "3/4  Installing the browser engine (one-time, ~150 MB)…"
 "$HOME/.local/share/uv/tools/gflow-cli/bin/playwright" install chromium 2>/dev/null || uv tool run --from gflow-cli playwright install chromium || echo "⚠️  Browser engine download failed; gflow will use your installed Google Chrome instead."
