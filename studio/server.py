@@ -1363,6 +1363,15 @@ def _fown(req, fid):
     return j if (u and j and j["user"] == u) else None
 
 
+@app.get("/api/flow/costs")
+def flow_costs(req: Request):
+    u = current_user(req)
+    if not u:
+        return JSONResponse({"error": "not logged in"}, 401)
+    m = _fmeta(u)
+    return {**FLOW_COSTS, "balance": m.get("credits"), "balance_at": m.get("credits_at")}
+
+
 @app.get("/api/flow/{fid}")
 def flow_status(fid: str, req: Request):
     if fid == "engine":  # route order: /api/flow/{fid} is registered first
@@ -1733,15 +1742,6 @@ FLOW_COSTS = {
     "image": {"pro": 0, "nb2": 0, "lite": 0},
     "source": "https://support.google.com/flow/answer/16526234", "image_note": "0 credits (daily image quota, per gflow-cli docs; not on Google's table)",
 }
-
-
-@app.get("/api/flow/costs")
-def flow_costs(req: Request):
-    u = current_user(req)
-    if not u:
-        return JSONResponse({"error": "not logged in"}, 401)
-    m = _fmeta(u)
-    return {**FLOW_COSTS, "balance": m.get("credits"), "balance_at": m.get("credits_at")}
 
 
 @app.post("/api/flow/engine")
