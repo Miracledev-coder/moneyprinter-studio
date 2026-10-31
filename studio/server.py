@@ -147,11 +147,21 @@ STYLES = {
 
 jobs, jobq = {}, queue.Queue()
 HIST = OUT_DIR / "history.json"
-META = ("status", "user", "title", "aspect", "voice", "created", "elapsed", "error", "video")
+META = ("status", "user", "title", "aspect", "voice", "created", "elapsed", "error", "video", "req", "retries")
 try:
     import json as _json
     for k, v in _json.loads(HIST.read_text()).items():
-        if v.get("status") == "done" and Path(v.get("video", "")).exists():
+        if v.get("status") == "done" and Path(v.get("video") or "").exists():
+            jobs[k] = v
+        elif v.get("status") in ("queued", "running") and v.get("req"):
+            # interrupted by a restart/redeploy: run it again once
+            if (v.get("retries") or 0) < 1:
+                v.update(status="queued", retries=(v.get("retries") or 0) + 1, created=v.get("created") or time.time())
+            else:
+                v.update(status="error", error="Stopped by a server restart twice. Please try again.")
+                v.pop("req", None)
+            jobs[k] = v
+        elif v.get("status") == "error":
             jobs[k] = v
 except Exception:
     pass
@@ -159,7 +169,7 @@ except Exception:
 
 def save_history():
     import json
-    done = {k: {m: v.get(m) for m in META} for k, v in jobs.items() if v.get("status") in ("done", "error")}
+    done = {k: {m: v.get(m) for m in META} for k, v in list(jobs.items())}
     HIST.write_text(json.dumps(done))
 
 
@@ -207,7 +217,7 @@ def worker():
         tdir = Path(utils.task_dir(jid))
         try:
             for attempt in range(3):  # Gemini sometimes returns a transient 503
-                res = tm.start(jid, j["params"], stop_at="video")
+                res = tm.start(jid, make_params(j["req"]), stop_at="video")
                 vids = (res or {}).get("videos") or []
                 err = str((sm.state.get_task(jid) or {}).get("error") or "")
                 if vids or not ("script" in err or "terms" in err):
@@ -237,7 +247,7 @@ def worker():
                 f.unlink(missing_ok=True)
             for k in [k for k, v in jobs.items() if v.get("status") == "done" and not Path(v["video"]).exists()]:
                 jobs.pop(k, None)
-            j.pop("params", None)
+            j.pop("req", None)
             save_history()
             import gc; gc.collect()
             try:
@@ -247,7 +257,26 @@ def worker():
             jobq.task_done()
 
 
+for _k in sorted((k for k, v in jobs.items() if v["status"] == "queued"), key=lambda k: jobs[k]["created"]):
+    jobq.put(_k)
 threading.Thread(target=worker, daemon=True).start()
+
+
+def keepalive():
+    """Render free sleeps after ~15 min without INBOUND traffic, killing renders. While work is queued or
+    running, ping our own public URL through the internet every 4 min; idle otherwise (saves free hours)."""
+    import urllib.request
+    url = (os.environ.get("RENDER_EXTERNAL_URL") or "https://moneyprinter-studio.onrender.com").rstrip("/") + "/healthz"
+    while True:
+        time.sleep(240)
+        if os.environ.get("RENDER") and any(j["status"] in ("queued", "running") for j in list(jobs.values())):
+            try:
+                urllib.request.urlopen(url, timeout=20).read()
+            except Exception as e:  # noqa: BLE001
+                print("keepalive failed:", type(e).__name__, flush=True)
+
+
+threading.Thread(target=keepalive, daemon=True).start()
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 HERE = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
@@ -277,7 +306,7 @@ def index(req: Request):
         opts += ('<optgroup label="ElevenLabs (free plan ~Eleven v4 · 10k credits/mo &#8776; 10 min audio; commercial use needs attribution)">'
                  + "".join(f'<option value="{v}">{k}</option>' for k, v in ELEVEN_VOICES.items()) + "</optgroup>")
     import json
-    fam = json.dumps({n: f[0] for n, f in FONT_META.items()})
+    fam = json.dumps({n: [f[0], f[2]] for n, f in FONT_META.items()})
     sty = json.dumps({k: {x: y for x, y in v.items() if x in ("text_fore_color", "stroke_color", "stroke_width", "text_background_color")} for k, v in STYLES.items()})
     return HTMLResponse(PAGE.replace("{{VOICES}}", opts).replace("{{USER}}", current_user(req))
                         .replace("{{FONTFAM}}", fam).replace("{{STYLES}}", sty))
@@ -337,8 +366,21 @@ async def generate(req: Request):
             return JSONResponse({"error": f"Daily ElevenLabs limit reached ({CAPS['eleven_chars']} characters per user). Use a free Edge voice or try tomorrow."}, 429)
     if not use(user, "videos"):
         return JSONResponse({"error": f"Daily limit reached ({CAPS['videos']} videos per user). Try again tomorrow."}, 429)
+    b["_voice"], b["_secs"] = voice, secs
+    jid = str(uuid.uuid4())
+    jobs[jid] = dict(status="queued", user=user, req=clean_body(b, 4000), created=time.time(), title=(topic or script)[:90],
+                     aspect="16:9" if b.get("aspect") == "16:9" else "9:16",
+                     voice=next((k.split(" —")[0] for k, v in VOICES.items() if v == voice), ""))
+    save_history()
+    jobq.put(jid)
+    return {"id": jid}
+
+
+def make_params(b):
+    topic, script = clean_text(b.get("topic"), 300), clean_text(b.get("script"), 4000)
+    voice, secs = b["_voice"], b["_secs"]
     sp = sub_params(b)
-    params = VideoParams(
+    return VideoParams(
         video_subject=topic or script[:80], video_script=script,
         video_terms=[clean_text(t, 40) for t in str(b.get("terms") or "")[:400].split(",") if t.strip()][:6] or None,
         video_clip_duration=num(b.get("clip"), 4, 2, 10, int), video_count=1, video_source="pixabay",
@@ -347,12 +389,6 @@ async def generate(req: Request):
         n_threads=1, paragraph_number=1 if secs <= 30 else 2 if secs <= 60 else 3 if secs <= 90 else 4 if secs <= 120 else 6,
         video_script_prompt=f"Write in English. Keep the whole script to {round(secs * 2.1 * 0.9)} to {round(secs * 2.1 * 1.1)} words in total (about {secs} seconds spoken).",
         **sp)
-    jid = str(uuid.uuid4())
-    vlabel = next((k.split(" —")[0] for k, v in VOICES.items() if v == voice), "")
-    jobs[jid] = dict(status="queued", user=user, params=params, created=time.time(), title=(topic or script)[:90],
-                     aspect="16:9" if b.get("aspect") == "16:9" else "9:16", voice=vlabel)
-    jobq.put(jid)
-    return {"id": jid}
 
 
 def sub_params(b):
@@ -479,10 +515,12 @@ def _font_meta():
     out = {}
     for n in sorted(FONTS):
         try:
-            fam, sub = ImageFont.truetype(str(FONT_DIR / n), 10).getname()
+            f = ImageFont.truetype(str(FONT_DIR / n), 1000)
+            fam, sub = f.getname()
+            a, d = f.getmetrics()
         except Exception:
             continue
-        out[n] = (fam, sub or "")
+        out[n] = (fam, sub or "", round(1000 / max(1, a + d), 3))
     return out
 
 
@@ -490,7 +528,7 @@ FONT_META = _font_meta()
 FONT_CSS = "".join(
     f"@font-face{{font-family:'S {fam}';src:url('/fonts/{n}');font-weight:{700 if 'Bold' in sub else 400};"
     f"font-style:{'italic' if 'Italic' in sub else 'normal'};font-display:swap}}"
-    for n, (fam, sub) in FONT_META.items() if n.endswith(".ttf"))
+    for n, (fam, sub, _r) in FONT_META.items() if n.endswith(".ttf"))
 
 
 @app.get("/fonts.css")
