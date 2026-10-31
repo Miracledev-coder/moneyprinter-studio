@@ -735,7 +735,12 @@ def _single_tts(
         parts = voice_name.split(":")
         if len(parts) >= 2:
             voice_id = parts[1]
-            return elevenlabs_tts(text, voice_id, voice_file, voice_rate, voice_volume)
+            sub = elevenlabs_tts(text, voice_id, voice_file, voice_rate, voice_volume)
+            fallback = os.getenv("ELEVENLABS_FALLBACK_MODEL_ID", "eleven_flash_v2_5")
+            if sub is None and os.getenv("ELEVENLABS_MODEL_ID", "eleven_v4") != fallback:
+                logger.warning(f"ElevenLabs primary model failed, retrying with {fallback}")
+                sub = elevenlabs_tts(text, voice_id, voice_file, voice_rate, voice_volume, model_id=fallback)
+            return sub
         else:
             logger.error(f"Invalid elevenlabs voice name format: {voice_name}")
             return None
@@ -2537,7 +2542,12 @@ def elevenlabs_tts(
         return None
 
     if not model_id:
-        model_id = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
+        model_id = os.getenv("ELEVENLABS_MODEL_ID", "eleven_v4")
+    try:
+        if model_id in {"eleven_v4", "eleven_v4_turbo"} and float(voice_rate or 1.0) != 1.0:
+            model_id = os.getenv("ELEVENLABS_FALLBACK_MODEL_ID", "eleven_flash_v2_5")  # v4 has no speed control
+    except (TypeError, ValueError):
+        pass
 
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/with-timestamps"
     headers = {

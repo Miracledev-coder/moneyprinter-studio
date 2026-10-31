@@ -17,7 +17,7 @@ def write_config():
              pixabay_api_keys=[os.environ.get("PIXABAY_API_KEY", "")],
              gemini_api_key=os.environ.get("GEMINI_API_KEY", ""),
              gemini_model_name=GEMINI_MODEL, subtitle_provider="edge",
-             log_level="INFO", max_concurrent_tasks=1, video_clip_concurrency=1, edge_tts_timeout=120)
+             log_level="INFO", max_concurrent_tasks=1, video_clip_concurrency=1, edge_tts_timeout=300)
     (ROOT / "config.toml").write_text(toml.dumps(cfg))
     os.chmod(ROOT / "config.toml", 0o600)
 
@@ -65,13 +65,15 @@ VOICES = {
     "Guy — American, male": "en-US-GuyNeural-Male",
 }
 EDGE_VOICES = dict(VOICES)
-ELEVEN_VOICES = {
-    "Sarah (ElevenLabs) — American, female": "elevenlabs:EXAVITQu4vr4xnSDxMaL:Sarah",
-    "Jessica (ElevenLabs) — American, female": "elevenlabs:cgSgspJ2msm6clMCkdW9:Jessica",
-    "Alice (ElevenLabs) — British, female": "elevenlabs:Xb7hH8MSUJpSbSDYk0k2:Alice",
-    "Liam (ElevenLabs) — American, male": "elevenlabs:TX3LPaxmHKxFdv7VOQHJ:Liam",
-    "Brian (ElevenLabs) — American, male": "elevenlabs:nPczCjzI2devNBz1zQrb:Brian",
-    "George (ElevenLabs) — British, male": "elevenlabs:JBFqnCBsd6RMkjVDRZzb:George",
+ELEVEN_VOICES = {  # premade voices: the only ones the free API allows; all work with Eleven v4
+    "Sarah (ElevenLabs v4) — American, female": "elevenlabs:EXAVITQu4vr4xnSDxMaL:Sarah",
+    "Jessica (ElevenLabs v4) — American, female": "elevenlabs:cgSgspJ2msm6clMCkdW9:Jessica",
+    "Lily (ElevenLabs v4) — British, female": "elevenlabs:pFZP5JQG7iQjIQuC4Bku:Lily",
+    "Alice (ElevenLabs v4) — British, female": "elevenlabs:Xb7hH8MSUJpSbSDYk0k2:Alice",
+    "Brian (ElevenLabs v4) — American, male": "elevenlabs:nPczCjzI2devNBz1zQrb:Brian",
+    "Chris (ElevenLabs v4) — American, male": "elevenlabs:iP95p4xoKVk53GoZ742B:Chris",
+    "George (ElevenLabs v4) — British, male": "elevenlabs:JBFqnCBsd6RMkjVDRZzb:George",
+    "Daniel (ElevenLabs v4) — British, male": "elevenlabs:onwK4e9ZLuTAKqWW03F9:Daniel",
 }
 if os.environ.get("ELEVENLABS_API_KEY"):
     VOICES.update(ELEVEN_VOICES)
@@ -182,7 +184,7 @@ def index(req: Request):
         return HTMLResponse(LOGIN.replace("{{ERR}}", ""))
     opts = '<optgroup label="Free voices (Edge)">' + "".join(f'<option value="{v}">{k}</option>' for k, v in EDGE_VOICES.items()) + "</optgroup>"
     if os.environ.get("ELEVENLABS_API_KEY"):
-        opts += ('<optgroup label="ElevenLabs (free plan ~10k credits/mo &#8776; 10 min audio; commercial use needs attribution)">'
+        opts += ('<optgroup label="ElevenLabs (free plan ~Eleven v4 · 10k credits/mo &#8776; 10 min audio; commercial use needs attribution)">'
                  + "".join(f'<option value="{v}">{k}</option>' for k, v in ELEVEN_VOICES.items()) + "</optgroup>")
     return HTMLResponse(PAGE.replace("{{VOICES}}", opts).replace("{{USER}}", current_user(req)))
 
@@ -202,6 +204,10 @@ def login(username: str = Form(...), password: str = Form(...)):
 @app.get("/logout")
 def logout():
     r = RedirectResponse("/", 303); r.delete_cookie("mps"); return r
+
+
+# target total length in seconds; legacy keys kept for old clients
+LENGTHS = {"15": 15, "30": 30, "60": 60, "90": 90, "120": 120, "180": 180, "short": 15, "medium": 40, "long": 75}
 
 
 @app.post("/api/generate")
@@ -232,13 +238,15 @@ async def generate(req: Request):
     extra = dict(subtitle_preset=preset, highlight_color=hexc(b.get("sub_hl"), "#A855F7"),
                  subtitle_uppercase=bool(b.get("sub_upper")))
     voice = b.get("voice") if b.get("voice") in VOICES.values() else VOICES["Ezinne — Nigerian, female"]
-    length = {"short": 1, "medium": 2, "long": 3}.get(b.get("length"), 1)
-    words = {1: "35 to 45 words (about 15 seconds spoken)", 2: "90 to 110 words", 3: "170 to 200 words"}[length]
+    secs = LENGTHS.get(str(b.get("length")), 15)
+    length = 1 if secs <= 30 else 2 if secs <= 60 else 3 if secs <= 90 else 4 if secs <= 120 else 6
+    w = round(secs * 2.1)
+    words = f"{round(w * 0.9)} to {round(w * 1.1)} words in total (about {secs} seconds spoken)"
     params = VideoParams(
         video_subject=topic or script[:80], video_script=script,
         video_terms=[t.strip()[:40] for t in str(b.get("terms") or "").split(",") if t.strip()][:6] or None,
         video_aspect=VideoAspect.landscape if b.get("aspect") == "16:9" else VideoAspect.portrait,
-        video_clip_duration=max(2, min(int(b.get("clip") or 4), 8)), video_count=1, video_source="pixabay",
+        video_clip_duration=max(2, min(int(b.get("clip") or 4), 10)), video_count=1, video_source="pixabay",
         video_language="en", voice_name=voice, voice_rate=float(b.get("rate") or 1.0),
         bgm_type="random" if b.get("music", True) else "", bgm_volume=0.15,
         subtitle_enabled=bool(b.get("subtitles", True)), font_name=font,

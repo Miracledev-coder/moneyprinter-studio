@@ -179,13 +179,16 @@ Vary hook types. Sort by score descending."""
 
 
 def script(b):
-    secs = {"short": 15, "medium": 40, "long": 75}.get(b.get("length"), 15)
-    words = int(secs * 2.5)
+    try:
+        secs = max(10, min(int(b.get("length")), 180))
+    except (TypeError, ValueError):
+        secs = {"short": 15, "medium": 40, "long": 75}.get(b.get("length"), 15)
+    words = int(secs * 2.1)
     i = b.get("idea") or {}
     p = f"""Write a short-form video voice-over script for this idea.
 Title: {i.get('title')}\nHook: {i.get('hook')} ({i.get('hook_type')})\nWhy: {i.get('why')}
 Goal: {b.get('goal')}. Platform: {b.get('platform')}. Audience: {b.get('audience') or 'general'}. Tone: {b.get('tone') or 'confident, friendly'}.
-Target duration {secs} seconds = about {words} spoken words TOTAL. Structure: hook (<=2 seconds, start with the hook line), tension/value, payoff, CTA.
+Target duration {secs} seconds = about {words} spoken words TOTAL. Structure: hook (<=2 seconds, start with the hook line), tension/value, payoff, CTA. For longer videos put most words in tension/value and payoff (several beats).
 Plain spoken English, no emojis, no stage directions, no hashtags inside the script.
 Return JSON: {{"hook":str,"tension":str,"payoff":str,"cta":str,"caption":str (1-2 lines for the post),"hashtags":[3-5 strings starting with #],"keywords":[3-5 stock footage search terms]}}"""
     d = _gemini(p)
