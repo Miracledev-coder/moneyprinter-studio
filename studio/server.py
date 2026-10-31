@@ -72,7 +72,8 @@ except Exception:
 # Per-user daily caps (in memory; reset at UTC midnight or on restart). Protects the shared free API keys.
 CAPS = {"videos": int(os.environ.get("CAP_VIDEOS", 12)), "ai": int(os.environ.get("CAP_AI", 60)),
         "eleven_chars": int(os.environ.get("CAP_ELEVEN_CHARS", 3000)), "previews": 200,
-        "minutes": int(os.environ.get("CAP_MINUTES", 30))}
+        "minutes": int(os.environ.get("CAP_MINUTES", 30)),
+        "flow": int(os.environ.get("CAP_FLOW", 50))}  # Flow files accepted per user per day (helper paces 75-120 s)
 _usage = {}
 
 
@@ -804,6 +805,7 @@ def upload_thumb(uid: str, req: Request):
     return FileResponse(t if uid.endswith(".thumb.jpg") and t.exists() else p)
 
 
+@app.post("/api/scene/ai")  # alias: older docs/tests used this path
 @app.post("/api/ai_image")
 async def api_ai_image(req: Request):
     """Scene editor: (re)generate one AI image for a scene and store it as the user's upload."""
@@ -814,10 +816,10 @@ async def api_ai_image(req: Request):
     text, prompt = clean_text(b.get("text"), 400), clean_text(b.get("prompt"), 1400)
     if not text and not prompt:
         return JSONResponse({"error": "Nothing to draw."}, 400)
+    if not is_admin(u):  # free image models are admin-only (checked before the quota so a refusal costs nothing)
+        return JSONResponse({"error": "Free AI image models are for the studio owner only. Connect your Google Flow and use “Send to Flow” for AI scenes.", "account": "/account"}, 403)
     if not use(u, "ai"):
         return JSONResponse({"error": f"Daily AI limit reached ({CAPS['ai']} requests). Try again tomorrow."}, 429)
-    if not is_admin(u):  # free image models are admin-only
-        return JSONResponse({"error": "Free AI image models are for the studio owner only. Connect your Google Flow and use “Send to Flow” for AI scenes.", "account": "/account"}, 403)
     import aivisuals as aiv, director, io
     style = aiv_norm(b.get("style"))
     W, H = (1024, 576) if b.get("aspect") == "16:9" else (576, 1024)
@@ -1773,6 +1775,8 @@ async def flow_upload(req: Request, file: UploadFile = File(...)):
     if not 1 <= sc <= len(j["filled"]):
         return JSONResponse({"error": "all scenes already filled", "done": len(j["filled"])}, 409)
     try:
+        if not use(j["user"], "flow"):
+            return JSONResponse({"error": f"Daily Flow limit reached ({CAPS['flow']} files). Try again tomorrow."}, 429)
         up = await run_in_threadpool(scn.save_upload, j["user"], file.filename, file.file)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, 400)

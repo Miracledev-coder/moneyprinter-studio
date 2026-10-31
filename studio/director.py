@@ -439,26 +439,49 @@ def fade_plan(lines, durs, xf):
 
 
 def join(clips, fades, xf, dst):
-    """One file: xfade where fades[i] (clip i was cut xf longer to keep sync), hard concat elsewhere."""
-    ins, graph, acc, t = [], [], "[n0]", probe(clips[0])[2]
-    for k, c in enumerate(clips):  # stills (Ken Burns) and stock clips differ in fps/timebase/SAR: normalise for xfade
-        ins += ["-i", c]
-        graph.append(f"[{k}:v]fps=30,settb=AVTB,setsar=1,format=yuv420p[n{k}]")
+    """One file: xfade where fades[i] (clip i was cut xf longer to keep sync), hard concat elsewhere.
+    Every input is scaled/padded to the first clip's size (xfade needs identical size, fps, timebase, SAR and format),
+    fades are skipped next to clips shorter than 2*xf (negative offsets broke xfade), and if the graph still fails
+    the clips are hard-joined with the concat demuxer so a render never dies at the join step."""
+    info = [probe(c) for c in clips]
+    W, H = info[0][0] or 720, info[0][1] or 1280
+    ins, graph, acc, t = [], [], "[n0]", info[0][2]
+    for k, c in enumerate(clips):
+        ins += ["-i", str(c)]
+        graph.append(f"[{k}:v]scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
+                     f"fps=30,settb=AVTB,setsar=1,format=yuv420p[n{k}]")
     nf = 0
     for i in range(1, len(clips)):
-        d = probe(clips[i])[2]
+        d = info[i][2]
         lab = f"[j{i}]"
-        if fades[i - 1]:
+        if fades[i - 1] and d > 2 * xf and info[i - 1][2] > 2 * xf and t - xf > 0:
             graph.append(f"{acc}[n{i}]xfade=transition=fade:duration={xf}:offset={t - xf:.3f}{lab}")
             t = t - xf + d; nf += 1
         else:
             graph.append(f"{acc}[n{i}]concat=n=2:v=1:a=0{lab}")
             t += d
         acc = lab
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-filter_complex_threads", "1", *ins, "-filter_complex", ";".join(graph), "-map", acc,
-                    "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads", "1", "-pix_fmt", "yuv420p", dst],
-                   timeout=600, check=True, capture_output=True)
-    return nf
+    try:
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-filter_complex_threads", "1", *ins, "-filter_complex", ";".join(graph), "-map", acc,
+                        "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads", "1", "-pix_fmt", "yuv420p", str(dst)],
+                       timeout=600, check=True, capture_output=True)
+        return nf
+    except subprocess.CalledProcessError as e:
+        print("join: xfade graph failed, hard-joining instead:", e.stderr.decode("utf-8", "replace")[-300:])
+    norm = []
+    for k, c in enumerate(clips):  # re-encode to one format, then lossless concat (low RAM: one clip at a time)
+        o = str(dst) + f".n{k}.mp4"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(c), "-vf", f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
+                        f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,fps=30,setsar=1,format=yuv420p", "-an", "-c:v", "libx264", "-preset", "veryfast",
+                        "-crf", "20", "-threads", "1", o], timeout=300, check=True, capture_output=True)
+        norm.append(o)
+    lst = str(dst) + ".txt"
+    Path(lst).write_text("".join(f"file '{n}'\n" for n in norm))
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", str(dst)],
+                   timeout=300, check=True, capture_output=True)
+    for n in norm + [lst]:
+        Path(n).unlink(missing_ok=True)
+    return 0
 
 
 def direct(jid, topic, script, secs, voice, rate, aspect, workdir, log=print, progress=None, crossfade=True, style="",

@@ -8,7 +8,7 @@ the clips, and this helper uploads each new file to the next empty scene of your
   python3 flow_bridge.py --job flow-xxxx.json --folder ~/Downloads/my-project
 
 Experimental: --drive uses gflow-cli (https://github.com/ffroliva/gflow-cli, unofficial) to drive Flow
-with your own signed-in Chrome, slowly (60-90 s between prompts) with a daily cap. Use at your own risk.
+with your own signed-in Chrome, slowly (75-120 s between prompts) with a daily cap of 50. Use at your own risk.
 No password is ever asked for or stored. Python standard library only.
 """
 import argparse, getpass, json, mimetypes, os, random, re, shutil, subprocess, sys, time, urllib.request, uuid
@@ -249,6 +249,8 @@ def watch(job, token, folder, use_drive, cap, base=None, key=None):
                 print(f"✗ {p.name}: {r.get('error')}")
                 if r.get("code") == 403:
                     sys.exit("Token rejected. Copy it again from 'Send to Flow'.")
+                if r.get("code") == 429:
+                    print("Studio's daily Flow limit (50) is reached; the rest can be uploaded tomorrow."); return
                 if r.get("code") == 409:
                     done = total
         time.sleep(3)
@@ -266,7 +268,7 @@ def main():
     ap.add_argument("--signin", action="store_true", help="one-time: open Chrome to sign in to Google Flow (your own account)")
     ap.add_argument("--pair", nargs="?", const="ask", metavar="CODE", help="pair with the code from Studio → Account → Connect my Google Flow")
     ap.add_argument("--account", default="", help="label for the Google account signed into Flow (shown on your Account page)")
-    ap.add_argument("--cap", type=int, default=20, help="daily cap for --drive (default 20)")
+    ap.add_argument("--cap", type=int, default=50, help="daily cap for --drive (default 50, same as the Studio limit)")
     a = ap.parse_args()
     if a.manual:
         a.drive = False

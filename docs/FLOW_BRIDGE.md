@@ -54,7 +54,7 @@ Character references are sent as `--ref` (image i2i, video r2v). Video durations
 
 * Flow images are free in Flow. **Veo video spends your Flow credits** (your plan's monthly allowance), so Studio defaults
   to images and uses Veo only where the director asks for motion.
-* Pacing is 75–120 s between generations, with a daily cap of 20 (`--cap`). The browser must stay **headed**
+* Pacing is 75–120 s between generations, with a daily cap of 50 (`--cap`). Studio also accepts at most 50 Flow files per user per day (`CAP_FLOW`). The browser must stay **headed**
   because of reCAPTCHA, so leave the Chrome window alone while it works.
 * If Flow changes its page, gflow-cli exits with code 23. The helper then stops automating and prints the manual route,
   and the remaining scenes stay open. Fix it with `uv tool upgrade gflow-cli`.
