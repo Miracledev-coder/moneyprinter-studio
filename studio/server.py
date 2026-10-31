@@ -149,7 +149,7 @@ STYLES = {
 
 jobs, jobq = {}, queue.Queue()
 HIST = OUT_DIR / "history.json"
-META = ("status", "user", "title", "aspect", "voice", "created", "elapsed", "error", "video", "req", "retries", "kind", "part", "yt", "parent", "drive")
+META = ("status", "user", "title", "aspect", "voice", "created", "elapsed", "error", "video", "req", "retries", "kind", "part", "yt", "parent", "drive", "flow", "script", "regen", "rreq")
 sys.path.insert(0, str(Path(__file__).parent))
 import gdrive as gd  # noqa: E402
 import urllib.parse  # noqa: E402
@@ -343,7 +343,7 @@ def render(jid, req, dest):
                                     ai_prompts=[clean_text(x, 300) for x in (req.get("ai_prompts") or [])][:40] or None,
                                     keep_script=bool(req.get("keep_script")), chars=chars_for(req), preset=preset_of(req),
                                     free_ai=is_admin(req.get("_user", "")),
-                                    flow=flow_runner(req.get("_user", ""), jid, req) if flow_engine(req.get("_user", ""), req) else None)
+                                    flow=flow_runner(req.get("_user", ""), jid, req) if (req.get("_reuse_flow") or flow_engine(req.get("_user", ""), req)) else None)
                 if jid in jobs:
                     jobs[jid]["dprog"], jobs[jid]["stage"] = 30, "Voice, subtitles & final render"
                     jobs[jid]["visuals"] = d.get("providers") or []
@@ -484,6 +484,9 @@ def worker():
                 f.unlink(missing_ok=True)
             for k in [k for k, v in jobs.items() if v.get("status") == "done" and not Path(v["video"]).exists() and not v.get("drive")]:
                 jobs.pop(k, None)
+            if j.get("flow") and j.get("status") == "done" and isinstance(j.get("req"), dict):
+                # keep a secret-free copy so "Regenerate scene" can re-render with the same settings
+                j["rreq"] = {k: v for k, v in j["req"].items() if not any(t in k.lower() for t in ("key", "token", "secret", "password"))}
             j.pop("req", None)
             _CANCEL.discard(jid)
             save_history()
@@ -1130,6 +1133,70 @@ def cancel_job(jid: str, req: Request):
     return {"ok": True, "status": j["status"], "flow_tasks_dropped": flows}
 
 
+@app.post("/api/jobs/{jid}/regen")
+async def regen_scene(jid: str, req: Request):
+    """Regenerate ONE scene of a finished Flow video on the user's Mac helper (same model, optional new prompt), then re-render."""
+    u = current_user(req)
+    j = jobs.get(jid)
+    if not u or not j or j.get("user") != u:
+        return JSONResponse({"error": "not found"}, 404)
+    fj = _fload(j.get("flow") or "")
+    if not fj:
+        return JSONResponse({"error": "This video has no Google Flow scenes to regenerate."}, 400)
+    if (j.get("regen") or {}).get("state") in ("queued", "generating", "rendering"):
+        return JSONResponse({"error": "A scene of this video is already being regenerated."}, 409)
+    if not flow_online(u):
+        return JSONResponse({"error": "Your Flow helper is offline. Start it on your Mac (flow-bridge --connect …), then try again."}, 409)
+    b = clean_body(await req.json(), 1400)
+    n = len(fj["filled"])
+    i = int(num(b.get("scene"), 1, 1, n, int)) - 1
+    prompt = clean_text(b.get("prompt"), 1400) or fj["prompts"][i]
+    kind = _kind(fj, i)
+    one = {"id": uuid.uuid4().hex, "user": u, "th": hashlib.sha256(secrets.token_urlsafe(24).encode()).hexdigest(),
+           "created": time.time(), "aspect": fj.get("aspect", "9:16"), "duration": fj.get("duration", 8), "style": fj.get("style"),
+           "texts": [fj["texts"][i]], "prompts": [prompt], "meta": {}, "filled": [None], "kinds": [kind], "auto": True,
+           "models": [(fj.get("models") or [""] * n)[i]], "regen_of": [fj["id"], i, jid]}
+    for k in ("adv", "agent_brief"):
+        if fj.get(k):
+            one[k] = fj[k]
+    if str(i) in (fj.get("sadv") or {}) or i in (fj.get("sadv") or {}):
+        one["sadv"] = {"0": (fj["sadv"].get(str(i)) or fj["sadv"].get(i))}
+    _fsave(one)
+    j["regen"] = {"scene": i + 1, "state": "generating", "flow": one["id"], "started": time.time()}
+    save_history()
+    threading.Thread(target=_regen_wait, args=(jid, one["id"]), daemon=True).start()
+    return {"ok": True, "scene": i + 1, "type": kind, "model": one["models"][0]}
+
+
+def _regen_wait(jid, oid):
+    try:
+        _regen_wait2(jid, oid)
+    except Exception as e:
+        (jobs.get(jid) or {}).get("regen", {}).update(state="error", error=f"Regenerate failed: {type(e).__name__}. Try again.")
+        save_history()
+
+
+def _regen_wait2(jid, oid):
+    j = jobs[jid]; rg = j["regen"]
+    limit = time.time() + int(os.environ.get("FLOW_REGEN_WAIT", 1800))
+    while time.time() < limit:
+        one = _fload(oid) or {}
+        if one.get("filled") and one["filled"][0]:
+            break
+        time.sleep(5)
+    else:
+        one = _fload(oid) or {}; one["closed"] = True; _fsave(one)
+        rg.update(state="error", error="Flow didn't deliver the new scene within 30 min. Check the helper on your Mac and try again."); save_history(); return
+    one["closed"] = True; _fsave(one)
+    fid, i, _ = one["regen_of"]
+    fj = _fload(fid); fj["filled"][i] = one["filled"][0]; fj["prompts"][i] = one["prompts"][0]; _fsave(fj)
+    b = {k: v for k, v in (j.get("req") or j.get("rreq") or {}).items() if k not in ("_local", "_clipmax", "_director", "scenes", "_reuse_flow")}; b.update(topic="", script=j.get("script") or b.get("script") or "", keep_script=True, _reuse_flow=fid)
+    nid = str(uuid.uuid4())
+    jobs[nid] = dict(status="queued", user=j["user"], req=b, created=time.time(), title=(j.get("title") or "")[:80] + f" (scene {i + 1} redone)",
+                     aspect=j.get("aspect"), voice=j.get("voice"), kind=j.get("kind"))
+    rg.update(state="rendering", new=nid); save_history(); jobq.put(nid)
+
+
 @app.get("/api/history")
 def history(req: Request):
     u = current_user(req)
@@ -1142,6 +1209,19 @@ def history(req: Request):
         d = {m: j.get(m) for m in ("status", "title", "aspect", "voice", "elapsed", "error", "part", "yt", "kind")}
         d["drive"] = bool(j.get("drive"))
         d["id"] = k
+        if j.get("flow") and j["status"] == "done":
+            fj = _fload(j["flow"]) or {}
+            d["scenes"] = [{"n": i + 1, "type": _kind(fj, i), "model": (fj.get("models") or [""] * 99)[i], "filled": bool(x)}
+                           for i, x in enumerate(fj.get("filled") or [])]
+        if j.get("regen"):
+            rg = j["regen"]
+            if rg.get("state") == "rendering":
+                nj = jobs.get(rg.get("new") or "") or {}
+                if nj.get("status") == "done":
+                    rg["state"] = "done"
+                elif nj.get("status") == "error" or not nj:
+                    rg.update(state="error", error="Re-render failed: " + str(nj.get("error") or "job lost"))
+            d["regen"] = rg
         d.update({x: y for x, y in status(k, req).items() if x in ("progress", "elapsed", "ahead", "stage", "notice")} if j["status"] in ("queued", "running") else {})
         out.append(d)
     return out[:30]
@@ -1846,7 +1926,13 @@ def flow_engine(u, req):
     """Flow is the default visual engine when this user's bridge is online, unless they picked the free engine.
     Non-admins have no free engine: Flow is their only AI engine."""
     eng = (req.get("engine") or _prefs(u).get("engine", "flow")) if is_admin(u) else "flow"
-    return eng == "flow" and req.get("visuals", "ai") == "ai" and flow_online(u)
+    if eng != "flow" or req.get("visuals", "ai") != "ai":
+        return False
+    if not flow_online(u) and (u in _keys() or _FLOW_SEEN.get(u) or is_admin(u)):  # helper pings every 20 s: give it a moment
+        end = time.time() + int(os.environ.get("FLOW_ONLINE_WAIT", 60))
+        while time.time() < end and not flow_online(u):
+            time.sleep(3)
+    return flow_online(u)
 
 
 def _prefs(u):
@@ -1873,6 +1959,16 @@ def _flow_score(fid, i, user, upid):
 def flow_runner(user, jid, req):
     """Return a director callback that queues the scenes for the user's Mac bridge and waits for the clips."""
     def run(lines, prompts, meta):
+        if req.get("_reuse_flow"):  # 'Regenerate scene' re-render: reuse this job's Flow files, no new generations
+            j = _fload(req["_reuse_flow"]) or {}
+            if jid in jobs:
+                jobs[jid]["flow"] = j.get("id")
+            out = {}
+            for i, up in enumerate((j.get("filled") or [])[:len(lines)]):
+                p = up and scn.upload_path(user, up["id"])
+                if p:
+                    out[i] = {"path": str(p), "model": up.get("model") or "Google Flow", "video": up.get("video"), "score": up.get("score")}
+            return out
         token = secrets.token_urlsafe(24)
         n = len(lines)
         scs = (meta or {}).get("scenes") or []
